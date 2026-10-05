@@ -1,0 +1,2 @@
+# maxtrade
+trading agent 
