@@ -47,6 +47,43 @@ The exchange-style chart has Candles/Line/Area modes, dark/light themes, optiona
 
 Options charts show the USD perpetual underlying, not coin-denominated option premiums. CALL/PUT bias is directional research only; a separate contract watchlist checks the existing expiry, liquidity, spread, and delta filters. Automatic contract refreshes are limited to once per minute; manual Refresh forces new quotes. No option premium entry, stop, or target is inferred. Invalid or gapped candles suppress chart signals; changed selections automatically load the new market and failed refreshes clear previous chart snapshots. Backtest results remain visible across price-only refreshes but are invalidated when completed OHLC history or replay settings change.
 
+## Historical research data
+
+Download a bounded, resumable Coinbase Exchange research dataset without AI calls or trades:
+
+```sh
+.venv/bin/python -m maxtrade.historical --product BTC-USD --interval 1d --start 2016-10-06 --end 2026-10-06
+.venv/bin/python -m maxtrade.historical --product ETH-USD --interval 1d --start 2016-10-06 --end 2026-10-06
+```
+
+Dates are UTC, start inclusive and end exclusive; only completed candles are accepted. The separate `data/historical.sqlite3` stores raw pages, SHA256 checksums, retrieval timestamps, validated candles and gap reports. Repeating the same range uses cached pages and verifies their checksums. A provider failure stops the run; rerun to resume, respecting rate limits. Conflicting stored prices are rejected, not overwritten. Missing buckets stay missing.
+
+The ten-year daily download above was verified locally: 3,652 candles each for BTC-USD and ETH-USD, 100% bucket coverage. This does not establish price accuracy, profitability or complete crypto history. `--interval 1h` is supported, but long hourly/4h coverage is not yet verified. Coinbase USD prices and base-asset volume are not CoinDCX USDT execution evidence. Provider licensing/redistribution review remains required. Historical downloads are not contemporaneously archived evidence; no model training or paper-policy changes follow from ingestion.
+
+### Causal shadow evaluation
+
+```sh
+.venv/bin/python -m maxtrade.historical_features --product BTC-USD --start 2016-10-06 --end 2026-10-06
+.venv/bin/python -m maxtrade.historical_features --product ETH-USD --start 2016-10-06 --end 2026-10-06
+```
+
+The loader verifies raw-page checksums and requires contiguous complete coverage. Versioned daily features include EMA20/50/200, simple-average RSI14 (not the live Wilder RSI), ATR percentage, returns, volatility and relative volume. Features become available at candle close; five-day next-open-to-close outcome labels remain separate. Prefix-invariance and future-window mutation tests guard against future-price leakage.
+
+The frozen research baseline takes sequential, full-notional five-day long trades when EMA20 > EMA50 > EMA200. The first 60% is development history; the next 20% contains four chronological evaluation windows and the final 20% is a held-out test. Outcomes crossing window ends are purged. No model fitting, parameter search or live paper policy modification occurs. Costs are 10 bps fees and 5 bps slippage per side. Always-long five-day trades and buy-and-hold are reported for comparison. This is not the current hourly stop/target strategy. Drawdown is realized closed-trade equity only, with no publication-delay, liquidity or intratrade-risk model.
+
+Reports are persisted by SHA256 in `historical_evaluations`. Local runs of `daily-uptrend-five-day-v1` produced final-test BTC: 63 trades, 46.03% win rate, 40.10% net return, 25.70% realized drawdown; ETH: 36 trades, 44.44% win rate, 30.76% net return, 24.75% realized drawdown. Two of four earlier rolling windows lost money for each asset. These are hypothetical results, not evidence of improved live accuracy or permission to promote the policy. This holdout has now been observed; retuning needs a new untouched holdout and forward-paper validation. Statistical training and historical evidence integration into agent decisions remain pending.
+
+### Hourly coverage and shadow context
+
+```sh
+.venv/bin/python -m maxtrade.historical --product BTC-USD --interval 1h --start 2025-10-06 --end 2026-10-06
+.venv/bin/python -m maxtrade.historical --product ETH-USD --interval 1h --start 2025-10-06 --end 2026-10-06
+```
+
+UTC-aligned hourly ranges also report derived 4h coverage using only four contiguous completed hours. These local one-year downloads returned 8,750 of 8,760 hourly candles per asset: 10 missing hours, and 2,186 of 2,190 derived 4h buckets. Gaps remain missing; hourly-policy certification is not complete and ten-year hourly coverage is unverified.
+
+Coordinated research now attaches `historical_shadow` from the separate research database. `MAXTRADE_HISTORICAL_DATABASE` can select another path; the default is workspace `data/historical.sqlite3`. This database does not upload automatically to hosted deployments. Complete daily data must have been retrieved/generated before the research time and end no more than two days before it. The raw-page loader verifies checksums. Current daily regime features and prior matured same-regime five-day samples are displayed and saved with the report; missing, stale or corrupt data is labelled UNAVAILABLE. No provider requests are made by this adapter. These retrospective samples are descriptive, not calibrated predictions or contemporaneous historical knowledge. They are deliberately excluded from Azure review and deterministic paper approval inputs; trade rules stay unchanged.
+
 ## Market research agent
 
 Open **Chart > Market research > Run market research** for a coordinated evidence report. Completed 1h/4h technical evidence records venue, units, source and expiry. Alternative.me provides Bitcoin-focused fear/greed context; CoinDesk RSS supplies deduplicated, attributed headline links, not exhaustive macro/event coverage; Deribit BTC/ETH inverse perpetuals supply funding, USD open interest and spread context. Deribit liquidity is not CoinDCX execution liquidity. Missing, conflicting, stale or invalid evidence keeps the paper decision at NO TRADE. Options reports describe USD underlying direction, never option-premium risk levels.

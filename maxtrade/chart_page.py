@@ -56,13 +56,13 @@ def render_chart_page() -> None:
     toolbar[0].selectbox("Chart style", ["Candles", "Line", "Area"], key="chart_style")
     toolbar[1].selectbox("Chart theme", ["Dark", "Light"], key="chart_theme")
     toolbar[2].selectbox("Visible candles", [80, 40, 120], key="chart_visible")
-    st.multiselect("Indicators", ["EMA 20", "EMA 50", "Volume", "RSI 14"],
+    st.multiselect("Indicators", ["EMA 20", "EMA 50", "EMA 200", "Bollinger Bands", "VWAP (UTC day)",
+                                  "Support / resistance", "Volume", "RSI 14", "MACD"],
                    default=["EMA 20", "EMA 50", "Volume", "RSI 14"], key="chart_indicators")
     st.toggle("Log price scale", key="chart_log")
     live = st.toggle("Live updates · 10s", value=True, key="chart_live")
     st.fragment(run_every="10s" if live else None)(render_chart_snapshot)(product, interval, pair, live)
-    with st.expander("Market research", icon=":material/radar:"):
-        render_market_research(product, pair)
+    render_market_research(product, pair)
 
 
 def render_chart_snapshot(product: str, interval: str, pair: str, live: bool) -> None:
@@ -138,6 +138,16 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool) ->
                                               "modeBarButtonsToRemove": ["select2d", "lasso2d"],
                                               "toImageButtonOptions": {"filename": "maxtrade_chart", "scale": 2}},
                     key="candle_chart")
+    st.subheader("Closed-candle details")
+    st.write(f"Technical direction: {latest.action}")
+    st.write(latest.reason)
+    st.dataframe([{"Close": candles[-1]["close"], "EMA 20": latest.ema_fast,
+                   "EMA 50": latest.ema_slow, "RSI 14": latest.rsi,
+                   "Research entry": latest.entry, "Research stop": latest.stop,
+                   "Research target": latest.target}], hide_index=True, width="stretch")
+    st.caption(f"{interval} completed candle · {close_time.isoformat(timespec='minutes')} · "
+               f"{'USD underlying, not option premium' if product == 'Options' else 'Market quote currency'} · "
+               "Technical research only, not paper approval or an exchange order.")
     export = pd.DataFrame(display_candles)
     export["time"] = pd.to_datetime(export["time"], unit="ms", utc=True)
     st.download_button("Candle CSV", export.to_csv(index=False), file_name="maxtrade_candles.csv",
@@ -156,6 +166,7 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool) ->
         render_replay(snapshot, interval, product)
     with st.expander("Research rules"):
         st.write("Chart indicators use completed candles. Signal markers and trade-level overlays are disabled. Drawings are temporary browser annotations, not orders or saved trading instructions.")
+        st.caption("EMA200 needs 200 closed candles. Bollinger Bands use 20 closes and two population standard deviations. Support/resistance are the prior 20-bar low/high, not predictive zones. MACD uses 12/26 EMAs and a 9-period signal. UTC-day VWAP excludes the first loaded day because its opening history may be incomplete; zero volume stays blank. Indicator warm-ups remain blank.")
         if product == "Spot":
             st.caption("Spot is buy-only research. Sell/short setups are available on Futures; no position-aware exit rule exists.")
         st.caption("Price display uses 10-second REST polling, not a tick-by-tick WebSocket stream. Signals use completed candles only; the forming candle never changes a confirmed signal. No automated orders.")

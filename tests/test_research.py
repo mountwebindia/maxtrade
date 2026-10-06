@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from dataclasses import replace
 from unittest.mock import Mock, patch
 
-from maxtrade.research import fetch_sentiment, market_evidence, run_market_research, sentiment_evidence
+from maxtrade.research import fetch_sentiment, market_evidence, run_coordinated_research, run_market_research, sentiment_evidence
 from maxtrade.history import ScanHistory
 from maxtrade.research_sources import derivatives_evidence, news_evidence
 from maxtrade.paper import PaperLedger, coordinate
@@ -151,6 +151,28 @@ class ResearchTests(unittest.TestCase):
         self.assertFalse(coordinate(report,self.now,True,account)['approved'])
         for invalid in ({'capital':10000}, dict(account,equity=float('nan'))):
             self.assertFalse(coordinate(self.paper_report(),self.now,True,invalid)['approved'])
+
+    def test_historical_shadow_is_attached_but_cannot_change_risk(self):
+        base = self.paper_report()
+        account = {'capital':10000, 'equity':10000, 'daily_pnl':0, 'occupied':False, 'kill_switch':False}
+        expected = coordinate(base, self.now, True, account)
+        for shadow in ({'status':'AVAILABLE', 'regime':'DOWNTREND'}, {'status':'UNAVAILABLE'}):
+            with patch('maxtrade.research.run_market_research', return_value=dict(base)), \
+                    patch('maxtrade.historical_features.historical_context', return_value=shadow), \
+                    patch('maxtrade.research.fetch_sentiment', return_value=base['sentiment']), \
+                    patch('maxtrade.research.fetch_news', return_value=base['news']), \
+                    patch('maxtrade.research.fetch_derivatives', return_value=base['derivatives']):
+                report = run_coordinated_research(Mock(), 'Spot', 'B-BTC_USDT')
+            self.assertEqual(report['historical_shadow'], shadow)
+            self.assertEqual(coordinate(report, self.now, True, account), expected)
+        with patch('maxtrade.research.run_market_research', return_value=dict(base)), \
+                patch('maxtrade.historical_features.historical_context', side_effect=ValueError('checksum mismatch')), \
+                patch('maxtrade.research.fetch_sentiment', return_value=base['sentiment']), \
+                patch('maxtrade.research.fetch_news', return_value=base['news']), \
+                patch('maxtrade.research.fetch_derivatives', return_value=base['derivatives']):
+            report = run_coordinated_research(Mock(), 'Spot', 'B-BTC_USDT')
+        self.assertEqual(report['historical_shadow']['status'], 'UNAVAILABLE')
+        self.assertEqual(coordinate(report, self.now, True, account), expected)
 
     def test_autonomous_worker_submits_without_human_review_and_pause_cancels(self):
         from maxtrade.worker import run_once

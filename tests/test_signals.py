@@ -34,6 +34,27 @@ class SignalTests(unittest.TestCase):
         self.assertEqual(clean.layout.yaxis.type, "log")
         self.assertFalse(clean.layout.shapes)
 
+    def test_extended_indicators_exclude_forming_candle(self):
+        candles = make_candles([100 + index * .1 for index in range(240)])
+        for index, candle in enumerate(candles):
+            candle["time"] = index * 3600000
+        analyses = chart_analysis(candles[:-1], "1h", True)
+        indicators = ("EMA 200", "Bollinger Bands", "VWAP (UTC day)", "Support / resistance", "MACD")
+        original = candle_figure(candles, analyses, "1h", indicators=indicators)
+        candles[-1].update(close=500, high=501, volume=10000)
+        changed = candle_figure(candles, analyses, "1h", indicators=indicators)
+        for before, after in zip(original.data[1:], changed.data[1:]):
+            self.assertEqual(tuple(before.x), tuple(after.x))
+            self.assertEqual(len(before.x), 239)
+            for first, second in zip(before.y, after.y):
+                self.assertTrue(first == second or (first != first and second != second))
+        traces = {trace.name: trace for trace in original.data}
+        self.assertAlmostEqual(traces["Support (prior 20)"].y[20], 99)
+        self.assertAlmostEqual(traces["Resistance (prior 20)"].y[20], 102.9)
+        self.assertTrue(all(value != value for value in traces["EMA 200"].y[:199]))
+        self.assertTrue(all(value != value for value in traces["VWAP (UTC day)"].y[:24]))
+        self.assertAlmostEqual(traces["VWAP (UTC day)"].y[24], 102.4)
+
     def test_chart_rejects_gaps_and_invalid_open(self):
         candles = make_candles([100] * 60)
         for index, candle in enumerate(candles):

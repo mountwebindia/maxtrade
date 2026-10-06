@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
+import os
+import sqlite3
+from pathlib import Path
 from typing import Any
 
 from requests import RequestException
@@ -125,6 +128,15 @@ def run_coordinated_research(client: Any, product: str, symbol: str) -> dict[str
     report = run_market_research(client, product, symbol)
     report["schema_version"] = 2
     report["agent"] = "research-coordinator"
+    from maxtrade.historical_features import historical_context
+
+    historical_database = Path(os.environ.get("MAXTRADE_HISTORICAL_DATABASE",
+                                              str(Path(__file__).resolve().parent.parent / "data" / "historical.sqlite3")))
+    try:
+        report["historical_shadow"] = historical_context(historical_database, symbol, datetime.now(timezone.utc))
+    except (OSError, sqlite3.Error, KeyError, IndexError, TypeError, ValueError, OverflowError) as error:
+        report["historical_shadow"] = {"agent": "historical-shadow", "status": "UNAVAILABLE",
+                                       "mode": "SHADOW ONLY", "execution_enabled": False, "reason": str(error)}
     for name, fetcher in (("sentiment", lambda: fetch_sentiment(client.session)),
                           ("news", lambda: fetch_news(client.session)),
                           ("derivatives", lambda: fetch_derivatives(client.session, symbol))):
@@ -151,7 +163,7 @@ def render_market_research(product: str, symbol: str) -> None:
     from maxtrade.options import DeribitClient
     from maxtrade.paper import PaperLedger, coordinate
 
-    with st.expander("Market research", icon=":material/radar:"):
+    with st.expander("Market research", icon=":material/radar:", expanded=True):
         if st.button("Run market research", icon=":material/radar:", key="research_run", width="stretch"):
             st.session_state.pop("research_report", None)
             client = DeribitClient() if product == "Options" else CoinDCXClient()
@@ -204,6 +216,15 @@ def render_market_research(product: str, symbol: str) -> None:
                 st.caption(f"OI: {derivatives['open_interest_unit']} · funding: {derivatives['funding_unit']}")
             elif report.get("derivatives_error"):
                 st.warning(f"Derivatives unavailable: {report['derivatives_error']}")
+            historical = report.get("historical_shadow")
+            if historical:
+                st.write(f"Historical shadow · {historical['status']}")
+                if historical["status"] == "AVAILABLE":
+                    st.caption(f"{historical['dataset']['product']} · Coinbase USD · daily · {historical['regime']}")
+                    st.dataframe([historical["prior_same_regime_five_day_outcomes"]], hide_index=True, width="stretch")
+                    st.caption("Descriptive historical samples, not predicted probabilities or paper-policy validation.")
+                else:
+                    st.caption(historical["reason"])
             st.write("Paper risk review")
             reviewed = st.checkbox("News and event risks reviewed", value=False, key=f"review_{report['created_at']}")
             try:

@@ -5,6 +5,7 @@ from math import isfinite
 from typing import Any
 
 import plotly.graph_objects as go
+import pandas as pd
 from plotly.subplots import make_subplots
 
 from maxtrade.coindcx import INTERVAL_MS
@@ -39,7 +40,10 @@ def candle_figure(candles: list[dict[str, Any]], analyses: list[TradeSignal],
     dark = theme == "Dark"
     background, foreground, grid = ("#16181d", "#d8dde5", "#292d35") if dark else ("#ffffff", "#242933", "#edf0f4")
     rising, falling = "#00b890", "#f45164"
-    panels = [name for name in ("Volume", "RSI 14") if name in indicators]
+    confirmed = pd.DataFrame(candles[:49 + len(analyses)])
+    confirmed_dates = dates[:len(confirmed)]
+    closes = confirmed["close"].astype(float)
+    panels = [name for name in ("Volume", "RSI 14", "MACD") if name in indicators]
     heights = [1 - .17 * len(panels)] + [.17] * len(panels)
     figure = make_subplots(rows=1 + len(panels), cols=1, shared_xaxes=True,
                            row_heights=heights, vertical_spacing=.025)
@@ -58,11 +62,43 @@ def candle_figure(candles: list[dict[str, Any]], analyses: list[TradeSignal],
         if name in indicators:
             figure.add_trace(go.Scatter(x=indicator_dates, y=[getattr(signal, attribute) for signal in analyses],
                                        name=name, mode="lines", line={"color": color, "width": 1.3}), row=1, col=1)
+    overlays = []
+    if "EMA 200" in indicators:
+        overlays.append(("EMA 200", closes.ewm(span=200, adjust=False, min_periods=200).mean(), "#e77caa"))
+    if "Bollinger Bands" in indicators:
+        middle = closes.rolling(20).mean()
+        deviation = closes.rolling(20).std(ddof=0)
+        overlays.extend([("BB upper", middle + 2 * deviation, "#8295ac"),
+                         ("BB middle", middle, "#8295ac"),
+                         ("BB lower", middle - 2 * deviation, "#8295ac")])
+    if "VWAP (UTC day)" in indicators:
+        volume = confirmed.get("volume", pd.Series(0., index=confirmed.index)).astype(float)
+        sessions = pd.to_datetime(confirmed["time"], unit="ms", utc=True).dt.floor("D")
+        typical = (confirmed["high"] + confirmed["low"] + closes) / 3
+        cumulative_volume = volume.groupby(sessions).cumsum()
+        vwap = (typical * volume).groupby(sessions).cumsum() / cumulative_volume.where(cumulative_volume > 0)
+        vwap = vwap.where(sessions != sessions.iloc[0])
+        overlays.append(("VWAP (UTC day)", vwap, "#e5ac46"))
+    if "Support / resistance" in indicators:
+        overlays.extend([("Support (prior 20)", confirmed["low"].shift(1).rolling(20).min(), "#00b890"),
+                         ("Resistance (prior 20)", confirmed["high"].shift(1).rolling(20).max(), "#f45164")])
+    for name, values, color in overlays:
+        figure.add_trace(go.Scatter(x=confirmed_dates, y=values, name=name, mode="lines",
+                                   line={"color": color, "width": 1.2}, connectgaps=False), row=1, col=1)
     for row, panel in enumerate(panels, start=2):
         if panel == "Volume":
             figure.add_trace(go.Bar(x=dates, y=[bar.get("volume", 0) for bar in candles], name="Volume",
                                    marker_color=[rising if bar["close"] >= bar["open"] else falling for bar in candles],
                                    opacity=.65), row=row, col=1)
+        elif panel == "MACD":
+            macd = closes.ewm(span=12, adjust=False, min_periods=12).mean() - closes.ewm(span=26, adjust=False, min_periods=26).mean()
+            macd_signal = macd.ewm(span=9, adjust=False, min_periods=9).mean()
+            histogram = macd - macd_signal
+            figure.add_trace(go.Bar(x=confirmed_dates, y=histogram, name="MACD histogram",
+                                   marker_color=[rising if value >= 0 else falling for value in histogram]), row=row, col=1)
+            for name, values, color in [("MACD", macd, "#4c91ff"), ("MACD signal", macd_signal, "#e5ac46")]:
+                figure.add_trace(go.Scatter(x=confirmed_dates, y=values, name=name, mode="lines",
+                                           line={"color": color, "width": 1.2}), row=row, col=1)
         else:
             figure.add_trace(go.Scatter(x=indicator_dates, y=[signal.rsi for signal in analyses], name="RSI 14",
                                        mode="lines", line={"color": "#b08bdf", "width": 1.3}), row=row, col=1)
