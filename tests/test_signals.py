@@ -1,6 +1,7 @@
 import unittest
 
 from maxtrade.signals import analyze_candles
+from maxtrade.charts import candle_figure, chart_analysis
 
 
 def make_candles(closes: list[float]) -> list[dict[str, float]]:
@@ -11,6 +12,33 @@ def make_candles(closes: list[float]) -> list[dict[str, float]]:
 
 
 class SignalTests(unittest.TestCase):
+    def test_chart_matches_scanner_without_future_candles(self):
+        candles = make_candles([100 + index * .1 + (index % 4) * .5 for index in range(90)])
+        for index, candle in enumerate(candles):
+            candle["time"] = index * 3600000
+        analyses = chart_analysis(candles, "1h", True)
+        self.assertEqual(analyses[-1], analyze_candles(candles, allow_short=True))
+        self.assertEqual(analyses[:21], chart_analysis(candles[:70], "1h", True))
+        figure = candle_figure(candles, analyses, "1h")
+        self.assertEqual(figure.data[0].type, "candlestick")
+        self.assertEqual(len(figure.data[0].x), len(candles))
+        self.assertEqual(len(figure.layout.shapes), 6)
+        options_figure = candle_figure(candles, analyses, "1h", options=True)
+        self.assertEqual(len(options_figure.layout.shapes), 3)
+        self.assertIn("CALL bias", [trace.name for trace in options_figure.data])
+
+    def test_chart_rejects_gaps_and_invalid_open(self):
+        candles = make_candles([100] * 60)
+        for index, candle in enumerate(candles):
+            candle["time"] = index * 3600000
+        candles[-1]["time"] += 3600000
+        with self.assertRaisesRegex(ValueError, "gaps"):
+            chart_analysis(candles, "1h", True)
+        candles[-1]["time"] -= 3600000
+        candles[-1]["open"] = 200
+        with self.assertRaisesRegex(ValueError, "open/high/low/close"):
+            chart_analysis(candles, "1h", True)
+
     def test_rejects_nonfinite_and_invalid_prices(self) -> None:
         for value in [float("nan"), float("inf"), -1, 0]:
             with self.subTest(value=value), self.assertRaises(ValueError):

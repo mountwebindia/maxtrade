@@ -13,7 +13,7 @@ python -m pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Streamlit prints a local URL, usually `http://localhost:8501`. Main-panel controls and a full-width **Scan markets now** button avoid hidden sidebar actions. Per-market progress shows scan activity. **Signals**, **History**, and **API setup** tabs separate work areas. Cards are the default, with one column on phones; Table remains optional. CSV exports and settings-change checks are retained. Scans run on demand, not automatically.
+Streamlit prints a local URL, usually `http://localhost:8501`. Main-panel controls and a full-width **Scan markets now** button avoid hidden sidebar actions. Per-market progress shows scan activity. **Signals**, **Chart**, **History**, and **Settings** tabs separate work areas, with bottom navigation on phones. Cards are the default, with one column on phones; Table remains optional. CSV exports and settings-change checks are retained. Scans run on demand, not automatically.
 
 ## CoinDCX credentials (configuration only)
 
@@ -28,6 +28,12 @@ This is a responsive web dashboard, not a native mobile app or installable PWA. 
 Spot and USDT-margined futures candidates are ranked by exchange-reported 24-hour volume before candle analysis. Raw volumes are not normalized across currencies/products and are only a discovery heuristic, not a liquidity guarantee. Each scan inspects at most 30 markets. Futures prices come from the public batch ticker, with candles requested only for selected active instruments.
 
 Hourly candles are native. Four-hour spot candles are aggregated from four contiguous, completed hourly candles aligned to UTC; four-hour futures candles are native. Both feeds are sorted chronologically, deduplicated, and exclude unfinished bars. Stale or invalid candle data produces a DATA ERROR row rather than a signal; individual request failures do not discard other markets. Price shows spot last price or futures mark price, while entry uses the completed candle close.
+
+## Candle chart
+
+Open **Chart** for CoinDCX spot/futures or Deribit BTC/ETH underlying candles. Browse active CoinDCX markets, select a market and timeframe, and refresh on demand. The chart includes OHLC candlesticks, EMA20/50, RSI14, and new BUY/LONG or SELL/SHORT setup markers calculated only from candles available at each close. Spot remains buy-only; SHORT is not a position-aware sell/exit instruction. Latest qualifying spot/futures setups show candle-close entry and ATR stop/target levels. These are research snapshots, not streaming quotes, fills, or a backtest.
+
+Options charts show the USD perpetual underlying, not coin-denominated option premiums. CALL/PUT bias is directional research only; a separate current contract watchlist checks the existing expiry, liquidity, spread, and delta filters. No option premium entry, stop, or target is inferred. Invalid or gapped candles suppress chart signals; changed selections hide old charts and failed refreshes clear previous chart snapshots.
 
 ## Saved history
 

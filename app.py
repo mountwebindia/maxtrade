@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from maxtrade.coindcx import CoinDCXClient
+from maxtrade.chart_page import render_chart_page
 from maxtrade.history import ScanHistory
 from maxtrade.options import DeribitClient, scan_options
 from maxtrade.presentation import signal_card
@@ -57,6 +58,7 @@ st.markdown(
         .card-price small { font-size: .75rem; font-weight: 400; color: var(--muted); }
         .risk-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; }
         .risk-grid > div { min-width: 0; }
+        .risk-grid strong { overflow-wrap: anywhere; }
         .risk-grid span, .risk-grid strong { display: block; font-size: .75rem; }
         .risk-grid span { color: var(--muted); }
         .signal-card p { font-size: .75rem; color: var(--muted); margin: .65rem 0 0; }
@@ -90,7 +92,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-signals_tab, history_tab, api_tab = st.tabs(["Signals", "History", "Settings"])
+signals_tab, chart_tab, history_tab, api_tab = st.tabs(["Signals", "Chart", "History", "Settings"])
 with signals_tab:
     product = st.radio("Market type", ["Spot", "Futures", "Options"], horizontal=True, label_visibility="collapsed", key="market_type", width="stretch")
     controls = st.columns([1, 1, 1] if product == "Options" else [1, 1])
@@ -190,6 +192,9 @@ with signals_tab:
         )
  else:
     st.markdown('<div class="empty-state"><strong>No snapshot yet</strong>Market signals will appear here.</div>', unsafe_allow_html=True)
+
+with chart_tab:
+    render_chart_page()
 
 with history_tab:
     st.caption("Local snapshots—not executed trades or performance records. Latest 50 scans shown.")

@@ -9,6 +9,29 @@ from maxtrade.settings import credential_status
 
 
 class DashboardTests(unittest.TestCase):
+    def test_chart_options_refresh_and_selection_invalidation(self):
+        from time import time
+        end = int(time() * 1000) // 3600000 * 3600000
+        candles = [{"time": end - (80 - index) * 3600000, "open": 100 + index * .1,
+                    "high": 102 + index * .1, "low": 98 + index * .1,
+                    "close": 100 + index * .1} for index in range(80)]
+        with patch("maxtrade.chart_page.DeribitClient") as client, \
+                patch("maxtrade.chart_page.scan_options", return_value=[]):
+            client.return_value.underlying_candles.return_value = candles
+            app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=20).run()
+            next(widget for widget in app.radio if widget.label == "Chart market type").set_value("Options").run()
+            next(button for button in app.button if button.key == "chart_refresh").click().run()
+            self.assertFalse(app.exception)
+            self.assertEqual(len(app.get("plotly_chart")), 1)
+            self.assertTrue(client.return_value.session.close.called)
+            next(widget for widget in app.selectbox if widget.label == "Chart underlying").select("ETH").run()
+            self.assertEqual(len(app.get("plotly_chart")), 0)
+            client.return_value.underlying_candles.side_effect = ValueError("Feed unavailable")
+            next(button for button in app.button if button.key == "chart_refresh").click().run()
+            self.assertFalse(app.exception)
+            self.assertEqual(len(app.get("plotly_chart")), 0)
+            self.assertTrue(any("no signal generated" in error.value for error in app.error))
+
     def test_options_state_has_enabled_scan_and_underlying_selection(self):
         app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=20).run()
         app.radio[0].set_value("Options").run()
