@@ -22,16 +22,17 @@ Publishing before setting these secrets deliberately locks the app. Password has
 
 ## Azure OpenAI backend configuration
 
-Create an Azure OpenAI resource and a model deployment in Azure. Add the following values privately in Streamlit Community Cloud's **Manage app > Settings > Secrets**, or as server environment variables. Environment values take precedence. Do not paste the API key into chat or commit it.
+The configured non-secret defaults target the supplied `gpt-6-astra-2` deployment through Responses v1. Add the API key privately in Streamlit Community Cloud's **Manage app > Settings > Secrets**, preserving existing login settings, or as a server environment variable. Environment values take precedence. Do not paste the API key into chat or commit it. Endpoint and deployment can be overridden:
 
 ```toml
-AZURE_OPENAI_ENDPOINT = "https://YOUR-RESOURCE.openai.azure.com"
-AZURE_OPENAI_DEPLOYMENT = "YOUR-DEPLOYMENT-NAME"
-AZURE_OPENAI_API_VERSION = "2024-10-21"
+AZURE_OPENAI_ENDPOINT = "https://neilbisht.services.ai.azure.com/openai/v1/responses"
+AZURE_OPENAI_DEPLOYMENT = "gpt-6-astra-2"
 AZURE_OPENAI_API_KEY = "YOUR-PRIVATE-KEY"
 ```
 
-Use the deployment name, not the model name, and an API version supported by that deployment. Restart after changing configuration. Configuration presence alone does not verify Azure authentication or deployment availability; use the explicit connection test. All four values are required if any are provided. Keys are excluded from configuration representations.
+Only the API key is needed when using these defaults. Responses v1 needs no dated API version: remove an existing `AZURE_OPENAI_API_VERSION`, or set it to `v1`. Requests use the deployment name as `model`, strict JSON schema output, a 4,096 output-token cap (including reasoning), and `store=false`. Incomplete, refused, blocked or malformed responses fail closed. Azure deployment guardrails apply automatically; the app does not change DefaultV2, deployment type, upgrade policy or rate limits. The supplied 250 RPM/250,000 TPM limits do not guarantee request availability; throttling blocks new entries rather than retrying indefinitely.
+
+Legacy Chat Completions remains supported with an HTTPS resource root endpoint, deployment name, dated `AZURE_OPENAI_API_VERSION` and key. Restart after changing configuration. Configuration presence alone does not verify Azure authentication or deployment availability; sign in and use **Settings > Test Azure connection**, then save **Azure-assisted** mode. Keys are excluded from configuration representations. No live connection has been verified without the private key.
 
 Settings now exposes an AI research mode selector and an explicit connection-test button. Azure-assisted worker cycles send public evidence to the configured deployment and require a validated structured review. VETO, UNCERTAIN, concerns, missing credentials or request failures block new autonomous paper entries. A CLEAR review cannot override deterministic risk checks and is not comprehensive event clearance. Azure requests incur provider charges. No resource provisioning or private credential setup is automatic.
 

@@ -6,6 +6,10 @@ from typing import Any
 from urllib.parse import urlsplit
 
 
+AZURE_DEFAULT_ENDPOINT = "https://neilbisht.services.ai.azure.com/openai/v1/responses"
+AZURE_DEFAULT_DEPLOYMENT = "gpt-6-astra-2"
+
+
 @dataclass(frozen=True)
 class AzureOpenAIConfig:
     endpoint: str
@@ -22,16 +26,23 @@ def azure_openai_config(environment: Mapping[str, Any] | None = None,
     values = [str(environment.get(name) or secrets.get(name) or "").strip() for name in names]
     if not any(values):
         return None
-    if not all(values):
-        raise ValueError("Azure OpenAI configuration is incomplete; all four settings are required.")
     endpoint, deployment, api_version, api_key = values
+    endpoint = endpoint or AZURE_DEFAULT_ENDPOINT
+    deployment = deployment or AZURE_DEFAULT_DEPLOYMENT
     address = urlsplit(endpoint)
+    responses = address.path.rstrip("/") == "/openai/v1/responses"
     if (address.scheme != "https" or not address.hostname or address.username or address.password
-            or address.path not in ("", "/") or address.query or address.fragment):
-        raise ValueError("Azure OpenAI endpoint must be an HTTPS resource URL without a path or credentials.")
+            or (address.path not in ("", "/") and not responses) or address.query or address.fragment):
+        raise ValueError("Azure OpenAI endpoint must be an HTTPS resource URL or /openai/v1/responses URL without credentials or query parameters.")
+    if not api_key:
+        raise ValueError("Azure OpenAI configuration is incomplete; add AZURE_OPENAI_API_KEY privately.")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", deployment):
         raise ValueError("Azure OpenAI deployment name is invalid.")
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}(?:-preview)?", api_version):
+    if responses:
+        if api_version not in ("", "v1"):
+            raise ValueError("Responses v1 does not use a dated API version; remove AZURE_OPENAI_API_VERSION or set it to v1.")
+        api_version = "v1"
+    elif not re.fullmatch(r"\d{4}-\d{2}-\d{2}(?:-preview)?", api_version):
         raise ValueError("Azure OpenAI API version must be a dated version, optionally ending in -preview.")
     return AzureOpenAIConfig(endpoint.rstrip("/"), deployment, api_version, api_key)
 

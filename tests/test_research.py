@@ -213,6 +213,42 @@ class ResearchTests(unittest.TestCase):
             report['ai_review'] = invalid
             self.assertFalse(coordinate(report, self.now, account=account, autonomous=True)['approved'])
 
+    def test_azure_responses_request_and_fail_closed_output(self):
+        import json
+        from maxtrade.azure_ai import review_evidence
+        from maxtrade.settings import azure_openai_config
+
+        configuration = azure_openai_config({'AZURE_OPENAI_API_KEY': 'private-test'}, {})
+        document = {'status': 'completed', 'output': [
+            {'type': 'reasoning', 'summary': []},
+            {'type': 'message', 'content': [{'type': 'output_text', 'text': json.dumps(
+                {'verdict': 'CLEAR', 'summary': 'Evidence reviewed', 'concerns': []})}]}]}
+        with patch('maxtrade.azure_ai.requests.Session') as session:
+            post = session.return_value.__enter__.return_value.post
+            response = post.return_value
+            response.status_code = 200
+            response.content = b'{}'
+            response.json.return_value = document
+            self.assertEqual(review_evidence(configuration, self.paper_report())['verdict'], 'CLEAR')
+            self.assertEqual(post.call_args.args[0], 'https://neilbisht.services.ai.azure.com/openai/v1/responses')
+            self.assertEqual(post.call_args.kwargs['params'], {})
+            body = post.call_args.kwargs['json']
+            self.assertEqual(body['model'], 'gpt-6-astra-2')
+            self.assertFalse(body['store'])
+            self.assertEqual(body['text']['format']['type'], 'json_schema')
+            self.assertNotIn('private-test', str(body))
+            for invalid in (dict(document, status='incomplete'), dict(document, output=[]),
+                            dict(document, content_filters=[{'blocked': True}]),
+                            dict(document, output=[{'type': 'message', 'content': [{'type': 'refusal'}]}]),
+                            dict(document, error={'code': 'server_error'}), {'status': 'completed', 'output': None}):
+                response.json.return_value = invalid
+                with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                    review_evidence(configuration, self.paper_report())
+            for http_code in (401, 403, 429, 500):
+                response.status_code = http_code
+                with self.subTest(http_code=http_code), self.assertRaises(ValueError):
+                    review_evidence(configuration, self.paper_report())
+
     def test_paper_ledger_next_bar_costs_stop_first_reopen_and_duplicate(self):
         from datetime import timedelta
         with TemporaryDirectory() as folder:

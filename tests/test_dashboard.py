@@ -25,6 +25,19 @@ class DashboardTests(unittest.TestCase):
             with self.subTest(name=name, invalid=invalid), self.assertRaises(ValueError):
                 azure_openai_config({}, dict(values, **{name: invalid}))
 
+    def test_azure_responses_configuration_uses_deployment_defaults(self):
+        config = azure_openai_config({'AZURE_OPENAI_API_KEY': 'test-private-key'}, {})
+        self.assertEqual(config.endpoint, 'https://neilbisht.services.ai.azure.com/openai/v1/responses')
+        self.assertEqual(config.deployment, 'gpt-6-astra-2')
+        self.assertEqual(config.api_version, 'v1')
+        self.assertNotIn('test-private-key', repr(config))
+        for values in ({'AZURE_OPENAI_ENDPOINT': config.endpoint},
+                       {'AZURE_OPENAI_API_KEY': 'test-private-key', 'AZURE_OPENAI_API_VERSION': '2024-10-21'},
+                       {'AZURE_OPENAI_API_KEY': 'test-private-key', 'AZURE_OPENAI_ENDPOINT': config.endpoint + '?key=bad'},
+                       {'AZURE_OPENAI_API_KEY': 'test-private-key', 'AZURE_OPENAI_ENDPOINT': 'https://example.com/other'}):
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                azure_openai_config(values, {})
+
     def setUp(self):
         login = patch("maxtrade.auth.require_login")
         login.start()
