@@ -151,6 +151,68 @@ class ResearchTests(unittest.TestCase):
         for invalid in ({'capital':10000}, dict(account,equity=float('nan'))):
             self.assertFalse(coordinate(self.paper_report(),self.now,True,invalid)['approved'])
 
+    def test_autonomous_worker_submits_without_human_review_and_pause_cancels(self):
+        from maxtrade.worker import run_once
+
+        with TemporaryDirectory() as folder:
+            path = Path(folder) / 'autonomous.sqlite3'
+            ledger = PaperLedger(path)
+            with self.assertRaises(ValueError):
+                ledger.submit(self.paper_report(), self.now, autonomous=True)
+            ledger.set_automation(True)
+            with patch('maxtrade.worker.CoinDCXClient'), patch('maxtrade.worker.PaperLedger.reconcile'), \
+                    patch('maxtrade.worker.run_coordinated_research', return_value=self.paper_report()), \
+                    patch('maxtrade.worker.datetime') as clock:
+                clock.now.return_value = self.now
+                self.assertEqual(run_once(path, ['B-BTC_USDT']), 0)
+                self.assertEqual(run_once(path, ['B-BTC_USDT']), 0)
+            self.assertEqual(len(ledger.positions()), 1)
+            self.assertEqual(ledger.positions()[0]['state'], 'PENDING')
+            self.assertEqual(ScanHistory(path).recent_research()[0]['report']['paper_policy'], 'autonomous-paper-v1')
+            self.assertIsNone(ledger.performance()['win_rate_pct'])
+            ledger.set_automation(False)
+            self.assertEqual(ledger.positions()[0]['state'], 'CANCELLED')
+            self.assertTrue(ledger.account(self.now)['kill_switch'])
+
+    def test_autonomous_policy_retains_risk_vetoes(self):
+        account = {'capital':10000, 'equity':10000, 'daily_pnl':0, 'occupied':False, 'kill_switch':False}
+        report = self.paper_report()
+        self.assertTrue(coordinate(report, self.now, account=account, autonomous=True)['approved'])
+        for change in ({'kill_switch':True}, {'occupied':True}, {'daily_pnl':-300}):
+            self.assertFalse(coordinate(report, self.now, account=dict(account, **change), autonomous=True)['approved'])
+        report['news']['expires_at'] = self.now.isoformat()
+        self.assertFalse(coordinate(report, self.now, account=account, autonomous=True)['approved'])
+
+    def test_azure_review_is_structured_and_cannot_override_risk(self):
+        import json
+        from maxtrade.azure_ai import review_evidence
+        from maxtrade.settings import AzureOpenAIConfig
+
+        configuration = AzureOpenAIConfig('https://example.openai.azure.com', 'model', '2024-10-21', 'private-test')
+        with patch('maxtrade.azure_ai.requests.Session') as session:
+            response = session.return_value.__enter__.return_value.post.return_value
+            response.status_code = 200
+            response.content = b'{}'
+            response.json.return_value = {'choices': [{'message': {'content': json.dumps(
+                {'verdict': 'CLEAR', 'summary': 'Supplied evidence reviewed', 'concerns': []})}}]}
+            review = review_evidence(configuration, self.paper_report())
+            self.assertEqual(review['verdict'], 'CLEAR')
+            self.assertNotIn('private-test', str(session.return_value.__enter__.return_value.post.call_args.kwargs['json']))
+            response.json.return_value = {'choices': [{'message': {'content': json.dumps(
+                {'verdict': ['CLEAR'], 'summary': 'Malformed verdict', 'concerns': []})}}]}
+            with self.assertRaisesRegex(ValueError, 'invalid review schema'):
+                review_evidence(configuration, self.paper_report())
+            response.status_code = 401
+            with self.assertRaises(ValueError):
+                review_evidence(configuration, self.paper_report())
+        account = {'capital':10000, 'equity':10000, 'daily_pnl':0, 'occupied':False, 'kill_switch':False}
+        report = dict(self.paper_report(), ai_mode='Azure-assisted', ai_review=review)
+        self.assertTrue(coordinate(report, self.now, account=account, autonomous=True)['approved'])
+        self.assertFalse(coordinate(report, self.now, account=dict(account, kill_switch=True), autonomous=True)['approved'])
+        for invalid in (None, {'verdict':'VETO'}, {'verdict':'UNCERTAIN'}, {'verdict':'CLEAR', 'concerns':['risk']}):
+            report['ai_review'] = invalid
+            self.assertFalse(coordinate(report, self.now, account=account, autonomous=True)['approved'])
+
     def test_paper_ledger_next_bar_costs_stop_first_reopen_and_duplicate(self):
         from datetime import timedelta
         with TemporaryDirectory() as folder:
@@ -173,6 +235,12 @@ class ResearchTests(unittest.TestCase):
             self.assertIn('STOP',position['reason'])
             self.assertGreater(position['entry'],100)
             self.assertGreaterEqual(position['pnl'],-100)
+            performance = ledger.performance()
+            self.assertEqual(performance['closed'], 1)
+            self.assertEqual(performance['win_rate_pct'], 0)
+            self.assertAlmostEqual(performance['net_pnl'], position['pnl'])
+            self.assertEqual(performance['daily'][0]['Closed'], 1)
+            self.assertGreater(performance['max_drawdown_pct'], 0)
             with self.assertRaises(Exception):
                 ledger.submit(report,self.now,True)
             with self.assertRaises(ValueError):
@@ -239,10 +307,16 @@ class ResearchTests(unittest.TestCase):
 
         with TemporaryDirectory() as folder:
             path = Path(folder)/'worker.sqlite3'
+            ledger = PaperLedger(path)
+            ledger.set_automation(True)
             with patch('maxtrade.worker.CoinDCXClient') as client, \
                     patch('maxtrade.worker.PaperLedger.reconcile',side_effect=ValueError('missing bar')), \
                     patch('maxtrade.worker.run_coordinated_research',return_value=self.paper_report()), \
+                    patch('maxtrade.worker.datetime') as clock, \
                     self.assertLogs(level='ERROR'):
+                clock.now.return_value = self.now
                 self.assertEqual(run_once(path,['B-BTC_USDT']),1)
                 self.assertEqual(len(ScanHistory(path).recent_research()),1)
+                self.assertEqual(ledger.positions(), [])
+                self.assertIn('Paper reconciliation failed', ScanHistory(path).recent_research()[0]['report']['blockers'])
                 client.return_value.session.close.assert_called_once()

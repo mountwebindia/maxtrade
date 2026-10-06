@@ -13,7 +13,7 @@ from maxtrade.history import DEFAULT_PATH
 
 
 def coordinate(report: dict[str, Any], now: datetime, reviewed: bool = False,
-               account: dict[str, Any] | None = None) -> dict[str, Any]:
+               account: dict[str, Any] | None = None, autonomous: bool = False) -> dict[str, Any]:
     blockers = []
     if now.utcoffset() is None:
         raise ValueError("Decision time must be timezone-aware")
@@ -40,8 +40,12 @@ def coordinate(report: dict[str, Any], now: datetime, reviewed: bool = False,
     derivatives = report.get("derivatives")
     if not isinstance(derivatives, dict) or derivatives.get("liquid") is not True:
         blockers.append("Poor derivatives context liquidity")
-    if not reviewed:
+    if not reviewed and not autonomous:
         blockers.append("Human news/event review required")
+    if report.get('ai_mode') == 'Azure-assisted':
+        review = report.get('ai_review')
+        if not isinstance(review, dict) or review.get('verdict') != 'CLEAR' or review.get('concerns'):
+            blockers.append('Azure review veto, uncertainty or unavailable')
     if not account:
         blockers.append("Paper account risk state unavailable")
     else:
@@ -64,6 +68,10 @@ class PaperLedger:
         with closing(self._connect()) as connection, connection:
             connection.execute("CREATE TABLE IF NOT EXISTS paper_settings (id INTEGER PRIMARY KEY CHECK(id=1), capital REAL NOT NULL, kill_switch INTEGER NOT NULL)")
             connection.execute("INSERT OR IGNORE INTO paper_settings VALUES (1,10000,1)")
+            connection.execute("CREATE TABLE IF NOT EXISTS paper_automation (id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL)")
+            connection.execute("INSERT OR IGNORE INTO paper_automation VALUES (1,0)")
+            connection.execute("CREATE TABLE IF NOT EXISTS paper_ai (id INTEGER PRIMARY KEY CHECK(id=1), mode TEXT NOT NULL)")
+            connection.execute("INSERT OR IGNORE INTO paper_ai VALUES (1,'Deterministic')")
             connection.execute("""CREATE TABLE IF NOT EXISTS paper_positions (
                 id INTEGER PRIMARY KEY, decision_id TEXT UNIQUE NOT NULL, symbol TEXT NOT NULL,
                 state TEXT NOT NULL, submitted_at TEXT NOT NULL, report_json TEXT NOT NULL,
@@ -87,6 +95,54 @@ class PaperLedger:
         with closing(self._connect()) as connection:
             return self._account(connection, now)
 
+    def automation_enabled(self) -> bool:
+        with closing(self._connect()) as connection:
+            return bool(connection.execute("SELECT enabled FROM paper_automation WHERE id=1").fetchone()[0])
+
+    def ai_mode(self) -> str:
+        with closing(self._connect()) as connection:
+            return connection.execute('SELECT mode FROM paper_ai WHERE id=1').fetchone()[0]
+
+    def set_ai_mode(self, mode: str) -> None:
+        if mode not in {'Deterministic', 'Azure-assisted'}:
+            raise ValueError('Unsupported research mode')
+        with closing(self._connect()) as connection, connection:
+            connection.execute('UPDATE paper_ai SET mode=? WHERE id=1', (mode,))
+
+    def set_automation(self, enabled: bool) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("UPDATE paper_automation SET enabled=? WHERE id=1", (int(enabled),))
+            connection.execute("UPDATE paper_settings SET kill_switch=? WHERE id=1", (int(not enabled),))
+            if not enabled:
+                connection.execute("UPDATE paper_positions SET state='CANCELLED',reason='Automation paused' WHERE state='PENDING'")
+
+    def performance(self) -> dict[str, Any]:
+        with closing(self._connect()) as connection:
+            rows = [dict(row) for row in connection.execute("SELECT * FROM paper_positions ORDER BY closed_at,id")]
+            capital = connection.execute("SELECT capital FROM paper_settings WHERE id=1").fetchone()[0]
+        closed = [row for row in rows if row['state'] == 'CLOSED']
+        wins = sum(row['pnl'] > 0 for row in closed)
+        gains = sum(max(row['pnl'], 0) for row in closed)
+        losses = -sum(min(row['pnl'], 0) for row in closed)
+        equity = peak = capital
+        drawdown = 0.0
+        daily = {}
+        for row in closed:
+            equity += row['pnl']
+            peak = max(peak, equity)
+            drawdown = max(drawdown, (peak - equity) / peak * 100)
+            day = row['closed_at'][:10]
+            item = daily.setdefault(day, {'Date (UTC)': day, 'Closed': 0, 'Wins': 0, 'Net P&L (USDT)': 0.0})
+            item['Closed'] += 1
+            item['Wins'] += int(row['pnl'] > 0)
+            item['Net P&L (USDT)'] += row['pnl']
+        for item in daily.values():
+            item['Win rate %'] = item['Wins'] / item['Closed'] * 100
+        return {'closed': len(closed), 'wins': wins, 'win_rate_pct': wins / len(closed) * 100 if closed else None,
+                'net_pnl': equity - capital, 'profit_factor': gains / losses if losses else None,
+                'max_drawdown_pct': drawdown, 'daily': sorted(daily.values(), key=lambda item: item['Date (UTC)'], reverse=True)}
+
     def settings(self, capital: float, kill_switch: bool) -> None:
         if not isfinite(capital) or not 100 <= capital <= 1_000_000:
             raise ValueError("Paper capital must be between 100 and 1,000,000 USDT")
@@ -100,14 +156,16 @@ class PaperLedger:
             if kill_switch:
                 connection.execute("UPDATE paper_positions SET state='CANCELLED',reason='Kill switch' WHERE state='PENDING'")
 
-    def submit(self, report: dict[str, Any], now: datetime, reviewed: bool) -> int:
+    def submit(self, report: dict[str, Any], now: datetime, reviewed: bool = False, autonomous: bool = False) -> int:
         payload = json.dumps(report, allow_nan=False, sort_keys=True)
         identity = json.dumps([report["product"], report["symbol"],
                                [(item["interval"], item["event_time"], item["action"]) for item in report["evidence"]]], sort_keys=True)
         decision_id = hashlib.sha256(identity.encode()).hexdigest()
         with closing(self._connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
-            risk = coordinate(report, now, reviewed, self._account(connection, now))
+            if autonomous and not connection.execute("SELECT enabled FROM paper_automation WHERE id=1").fetchone()[0]:
+                raise ValueError("Autonomous paper mode is paused")
+            risk = coordinate(report, now, reviewed, self._account(connection, now), autonomous=autonomous)
             if not risk["approved"]:
                 raise ValueError("; ".join(risk["blockers"]))
             levels = next(item["values"] for item in report["evidence"] if item["interval"] == "1h")

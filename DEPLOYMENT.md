@@ -31,9 +31,35 @@ AZURE_OPENAI_API_VERSION = "2024-10-21"
 AZURE_OPENAI_API_KEY = "YOUR-PRIVATE-KEY"
 ```
 
-Use the deployment name, not the model name, and an API version supported by that deployment. Restart after changing configuration. Settings reports configuration presence only; this does not test Azure authentication or deployment availability. All four values are required if any are provided. Keys are excluded from configuration representations.
+Use the deployment name, not the model name, and an API version supported by that deployment. Restart after changing configuration. Configuration presence alone does not verify Azure authentication or deployment availability; use the explicit connection test. All four values are required if any are provided. Keys are excluded from configuration representations.
 
-This release adds configuration only: no Azure requests, model-generated trading decisions, new cloud resources or paid inference are enabled. Resource provisioning, private credentials and a connection test remain operator steps before enabling a future AI mode. Existing deterministic analysis and real-order restrictions are unchanged.
+Settings now exposes an AI research mode selector and an explicit connection-test button. Azure-assisted worker cycles send public evidence to the configured deployment and require a validated structured review. VETO, UNCERTAIN, concerns, missing credentials or request failures block new autonomous paper entries. A CLEAR review cannot override deterministic risk checks and is not comprehensive event clearance. Azure requests incur provider charges. No resource provisioning or private credential setup is automatic.
+
+## Autonomous paper operation
+
+Settings exposes **Start paper automation**, **Pause paper automation**, and a one-shot research cycle. Starting switches the paper kill switch off; pausing switches it on and cancels pending entries, not open positions. The persisted autonomous-paper-v1 policy removes human approval only for paper automation. BTC/ETH USDT spot, fresh 1h/4h LONG alignment, provider freshness/liquidity, one occupied position, 1% risk, 25% allocation and a 3% realized daily-loss veto remain enforced. Headlines are limited market context, not comprehensive macro/event clearance. Real orders remain disabled.
+
+For unattended operation run this on a managed, always-on backend with the same persistent database as the dashboard:
+
+```sh
+MAXTRADE_DATABASE=/srv/maxtrade/data/scan_history.sqlite3 /srv/maxtrade/.venv/bin/python -m maxtrade.worker --watch
+```
+
+The process checks every 15 minutes with existing slot deduplication. Configure service supervision, startup, backups and monitoring externally. Streamlit Cloud cannot share this local file with another server; migrate both services to shared durable storage/hosting before claiming continuous hosted automation. Dashboard-only cycles stop when no operator runs them. Azure secrets configured in Streamlit Cloud are not automatically available to an external worker; set backend environment variables separately.
+
+Paper performance uses all closed ledger positions, positive net P&L after modeled costs as wins, and excludes pending/open/cancelled positions. Breakeven is a non-win. Daily grouping uses UTC close date; drawdown is realized-only. Small samples do not establish reliability.
+
+### Temporary local operation
+
+Until the VPS is available, run the dashboard and worker on the same Mac and database. From the repository root, start the dashboard with its existing VS Code task and run the worker in a separate terminal:
+
+```sh
+MAXTRADE_DATABASE="$PWD/data/scan_history.sqlite3" .venv/bin/python -m maxtrade.worker --watch
+```
+
+Enable **Start paper automation** in the local dashboard Settings. Do not run a second worker. Keep the Mac awake, online and the worker terminal open; this setup does not survive sleep, shutdown or terminal closure automatically. Local positions and statistics do not appear in the separate Streamlit Cloud database. Use **Pause paper automation** to block new entries and cancel pending entries; keep the worker running to reconcile open positions. Ctrl+C stops the worker, including open-position monitoring.
+
+For the Hostinger migration, use a VPS rather than shared hosting, migrate the ledger with SQLite's online backup API, and give both services the same absolute database path. Configure a non-root service account, automatic restart, HTTPS/WebSocket reverse proxy, private credentials, off-host backups and monitoring before enabling the hosted policy. Never run watch mode and cron together.
 
 ## Current Hostinger shared hosting
 
@@ -63,7 +89,7 @@ Before enabling account credentials remotely: implement authentication/access co
 
 ## Research worker and persistent storage
 
-The worker is one-shot, public-data-only and limited to BTC/ETH USDT spot. It reconciles previously human-approved paper entries, saves research and records internal alerts. It never submits new entries or real orders. Run dashboard and worker against the same local, persistent SQLite path, with one dashboard replica:
+The worker supports one-shot or watch operation and is limited to BTC/ETH USDT spot. It reconciles paper positions, saves research and records internal alerts. When autonomous paper mode is explicitly started, it can submit eligible simulated entries without human review. It never submits real orders. Run dashboard and worker against the same local, persistent SQLite path, with one dashboard replica:
 
 ```sh
 export MAXTRADE_DATABASE=/srv/maxtrade/data/scan_history.sqlite3

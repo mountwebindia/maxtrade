@@ -20,6 +20,13 @@
 - One-shot research/reconciliation worker, 15-minute slot deduplication, saved internal alerts and archive viewer. External scheduling is opt-in and not activated on Streamlit Cloud.
 
 ## Next: strategy evaluation
+### Autonomous paper release
+- Implemented persisted Start/Pause automation, automatic worker submissions without human review, deterministic vetoes and reconciliation-failure entry blocking. Real orders remain disabled.
+- Added complete closed-ledger net win rate, daily results/CSV, realized drawdown and profit factor. Signal accuracy remains separate.
+- Added visible Azure-assisted mode and explicit connection test; structured AI reviews can veto but cannot override risk limits.
+- Added backend watch mode. Always-on service provisioning, shared durable storage, backups, heartbeat monitoring and live Azure credentials remain unconfigured infrastructure work.
+- Next evaluation gate: collect forward results under frozen policy versions, expand failure/gap fixtures and implement walk-forward evaluation before expanding assets or execution scope.
+
 1. **Extended evaluation:** verify longer historical data availability, historical funding and market constraints; add out-of-sample and walk-forward evaluation. Report sample size, drawdown and costs. Current loaded-chart replay is too short to establish reliability.
 2. **Paper evaluation:** accumulate forward paper results and evaluate fixtures, missing-data recovery, gaps and risk limits. Add verified exchange lot constraints and execution-liquidity checks before expanding beyond the current spot simulation.
 3. **Risk expansion:** unrealized P&L, portfolio/multi-currency exposure and position-aware emergency exits. Current caps use realized equity and one spot position; this is not live-account risk management.

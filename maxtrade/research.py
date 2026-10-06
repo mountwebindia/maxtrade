@@ -235,6 +235,29 @@ def render_paper_account() -> None:
     try:
         ledger = PaperLedger()
         account = ledger.account(datetime.now(timezone.utc))
+        enabled = ledger.automation_enabled()
+        st.write(f"Autonomous paper mode: {'RUNNING POLICY' if enabled else 'PAUSED'}")
+        if st.button("Pause paper automation" if enabled else "Start paper automation",
+                     icon=":material/pause:" if enabled else ":material/play_arrow:", key="paper_automation"):
+            ledger.set_automation(not enabled)
+            st.rerun()
+        if st.button("Run autonomous research cycle", icon=":material/radar:", key="paper_cycle", disabled=not enabled):
+            from maxtrade.worker import run_once
+            from maxtrade.settings import azure_openai_config
+            configuration = None
+            if ledger.ai_mode() == 'Azure-assisted':
+                try:
+                    secrets = st.secrets.to_dict()
+                except (FileNotFoundError, st.errors.StreamlitSecretNotFoundError):
+                    secrets = {}
+                configuration = azure_openai_config(secrets=secrets)
+            with st.spinner("Researching BTC and ETH; checking paper risk and positions..."):
+                failures = run_once(ledger.path, ["B-BTC_USDT", "B-ETH_USDT"], ai_config=configuration)
+            if failures:
+                st.warning(f"Cycle finished with {failures} provider/reconciliation failures. Check worker logs.")
+            else:
+                st.success("Cycle completed; only eligible paper decisions are queued.")
+        st.caption("BTC/ETH USDT spot · no human approval · headline coverage is not comprehensive event clearance · unattended cycles require a running backend worker")
         with st.form("paper_settings"):
             capital = st.number_input("Paper capital (USDT)", min_value=100.0, max_value=1_000_000.0,
                                       value=float(account["capital"]), disabled=bool(ledger.positions()))
@@ -245,6 +268,20 @@ def render_paper_account() -> None:
                 st.success("Paper limits saved.")
         st.caption("USDT spot only · 1% risk · 25% allocation cap · 3% realized daily-loss veto · 10 bps fees per side · 5 bps slippage per side")
         st.metric("Realized paper equity (USDT)", f"{account['equity']:,.2f}")
+        performance = ledger.performance()
+        metrics = st.columns(3)
+        metrics[0].metric("Net paper win rate", f"{performance['win_rate_pct']:.1f}%" if performance['closed'] else "No closed trades")
+        metrics[1].metric("Closed paper trades", performance['closed'])
+        metrics[2].metric("Net paper P&L (USDT)", f"{performance['net_pnl']:,.2f}")
+        st.caption(f"Realized max drawdown: {performance['max_drawdown_pct']:.2f}% · profit factor: "
+                   + (f"{performance['profit_factor']:.2f}" if performance['profit_factor'] is not None else "N/A (no gross losses)"))
+        if performance['daily']:
+            import pandas as pd
+            daily = pd.DataFrame(performance['daily'])
+            st.dataframe(daily, hide_index=True, width="stretch")
+            st.download_button("Paper daily results CSV", daily.to_csv(index=False).encode(),
+                               file_name="paper_daily.csv", mime="text/csv", icon=":material/download:")
+        st.caption("Win = closed trade with positive net P&L after modeled fees/slippage. Breakeven counts as non-win; pending/open/cancelled excluded. Signal target accuracy is separate. No profitability guarantee.")
         positions = ledger.positions()
         if positions:
             columns = ("id", "symbol", "state", "submitted_at", "entry", "exit", "quantity", "pnl", "reason")
@@ -259,6 +296,6 @@ def render_paper_account() -> None:
                 st.rerun()
             finally:
                 client.session.close()
-        st.caption("Snapshot simulation only: fresh reviewed evidence at submission, immediately next hourly open, no fresh recommendation at fill. Completed 1h bars reconstruct fills. Kill switch cancels pending entries, not open positions. Equity excludes unrealized P&L. Local/cloud SQLite needs durable storage and backups.")
+        st.caption("Snapshot simulation: fresh evidence at submission, immediately next hourly open, no fresh recommendation at fill. Autonomous mode waives human review, not evidence/risk checks. Completed 1h bars reconstruct fills. Kill switch cancels pending entries, not open positions. Equity excludes unrealized P&L. Local/cloud SQLite needs durable storage and backups.")
     except (OSError, sqlite3.Error, ValueError, RequestException) as error:
         st.warning(f"Paper account unavailable: {error}")

@@ -1,4 +1,10 @@
 # MaxTrade
+## Autonomous paper research
+
+Settings now exposes **AI research mode**, an Azure connection test, and **Start/Pause paper automation**. Autonomous paper mode removes human approval for BTC/ETH USDT spot simulations while retaining evidence, position, freshness and loss-limit vetoes. Closed-trade net win rate, daily P&L/CSV, profit factor and realized drawdown are shown separately from scanner target accuracy.
+
+Run `python -m maxtrade.worker --watch` on a managed backend sharing the dashboard's persistent `MAXTRADE_DATABASE` path for unattended 15-minute cycles. Streamlit Cloud alone does not provide this always-on worker or durable shared storage. Azure-assisted mode requires private credentials and incurs Azure charges; an AI review can veto but cannot override deterministic risk checks. Real orders remain disabled. See [deployment setup](DEPLOYMENT.md#autonomous-paper-operation).
+
 
 For GitHub publishing, live-link hosting, and Hostinger shared-hosting limitations, see [DEPLOYMENT.md](DEPLOYMENT.md).
 

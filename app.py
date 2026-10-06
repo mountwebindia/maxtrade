@@ -12,7 +12,7 @@ from maxtrade.history import ScanHistory
 from maxtrade.options import DeribitClient, scan_options
 from maxtrade.presentation import signal_card
 from maxtrade.scanner import scan_futures, scan_spot
-from maxtrade.settings import azure_openai_config, credential_status
+from maxtrade.settings import credential_status
 from maxtrade.auth import clear_session, require_login
 
 
@@ -290,7 +290,9 @@ with history_tab:
 
 with api_tab:
     from maxtrade.research import render_paper_account
+    from maxtrade.azure_ai import render_azure_settings
 
+    render_azure_settings()
     render_paper_account()
     st.markdown("#### CoinDCX configuration")
     try:
@@ -302,12 +304,6 @@ with api_tab:
     st.markdown("Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` and edit the copy locally. Alternatively set `COINDCX_API_KEY` and `COINDCX_API_SECRET` in the server environment. Restart the app afterward.")
     st.warning("Never paste keys into chat or commit the secrets file. Use the minimum exchange permissions available; do not grant withdrawal permissions. Do not add exchange keys to a public deployment until authentication and access controls are in place.")
     st.caption("This is a responsive web dashboard, not a native mobile app. Hosted links can be opened on a phone. Local scan history on cloud hosting may be lost when the app restarts or is redeployed, and is shared across app users.")
-    st.markdown("#### Azure OpenAI")
-    try:
-        azure_config = azure_openai_config(secrets=local_secrets)
-        st.info("Configured · model calls disabled" if azure_config else "Not configured")
-    except ValueError as error:
-        st.warning(str(error))
     if st.button("Sign out", icon=":material/logout:", key="desktop_logout"):
         clear_session()
         st.rerun()
