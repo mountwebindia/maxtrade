@@ -61,25 +61,32 @@ def daily_accuracy(records: list[dict]) -> list[dict]:
     return sorted(days.values(), key=lambda row: row["Date UTC"], reverse=True)
 
 
+def update_outcomes(history, client, now_ms: int) -> list[str]:
+    cache = {}
+    errors = []
+    for record in history.predictions():
+        if record["status"] not in {"PENDING", "DATA GAP"}:
+            continue
+        key = (record["product"], record["pair"])
+        try:
+            if key not in cache:
+                fetch = client.spot_candles if record["product"] == "Spot" else client.futures_candles
+                cache[key] = fetch(record["pair"], "1h", count=480)
+            history.save_outcome(record["fingerprint"], evaluate_prediction(record, cache[key], now_ms))
+        except (requests.RequestException, ValueError, KeyError, TypeError) as error:
+            errors.append(f"{record['pair']}: outcome unavailable ({error})")
+    return errors
+
+
 def render_daily_accuracy(history) -> None:
     st.markdown("#### Daily accuracy")
-    st.caption("Forward scan signals only · UTC scan date · next timeframe boundary entry · 24-hour target-before-stop · same-bar ties count as losses. Expired predictions count as misses; pending, gaps and invalid entries are unscored. Repeated signals on the same candle count once. Research reports, options and NO TRADE are not scored.")
+    st.caption("Forward scans and aligned autonomous technical signals · UTC signal date · next timeframe boundary entry · 24-hour target-before-stop · same-bar ties count as losses. Expired predictions count as misses; pending, gaps and invalid entries are unscored. Repeated signals on the same candle count once. Options and NO TRADE are not scored; technical accuracy is separate from paper approval and net win rate.")
     if st.button("Update outcomes", icon=":material/sync:", key="accuracy_update"):
         client = CoinDCXClient()
-        cache = {}
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         try:
-            for record in history.predictions():
-                if record["status"] not in {"PENDING", "DATA GAP"}:
-                    continue
-                key = (record["product"], record["pair"])
-                try:
-                    if key not in cache:
-                        fetch = client.spot_candles if record["product"] == "Spot" else client.futures_candles
-                        cache[key] = fetch(record["pair"], "1h", count=480)
-                    history.save_outcome(record["fingerprint"], evaluate_prediction(record, cache[key], now_ms))
-                except (requests.RequestException, ValueError, KeyError, TypeError) as error:
-                    st.warning(f"{record['pair']}: outcome unavailable ({error})")
+            for error in update_outcomes(history, client, now_ms):
+                st.warning(error)
         finally:
             client.session.close()
     records = history.predictions()
@@ -98,4 +105,4 @@ def render_daily_accuracy(history) -> None:
                 **(json.loads(record["result_json"]) if record["result_json"] else {})}
                for record in records if record["created_at"][:10] == selected_date]
     st.dataframe(details, hide_index=True, width="stretch")
-    st.caption("Gross price outcomes, not executed trades or net profitability. Fees, slippage and funding are excluded. Records update only on request; cloud storage may be lost on restart. Small samples do not establish future accuracy.")
+    st.caption("Gross price outcomes, not executed trades or net profitability. Fees, slippage and funding are excluded. Outcomes update each worker cycle or on request; cloud storage may be lost on restart. A signal's 24-hour evaluation may finish the following day. Small samples do not establish future accuracy.")

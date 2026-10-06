@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from maxtrade.options import DeribitClient, scan_options
+from maxtrade.options import DeribitClient, scan_options, option_chain
 
 
 class OptionsTests(unittest.TestCase):
@@ -67,3 +67,20 @@ class OptionsTests(unittest.TestCase):
             request.return_value.json.return_value = {"error": {"message": "rate limited"}}
             with self.assertRaises(ValueError):
                 client.instruments("BTC")
+
+    def test_chain_pairs_call_put_and_blanks_stale_quotes(self):
+        self.client.instruments.return_value = [self.instrument, dict(self.instrument,
+            instrument_name='BTC-TEST-P', option_type='put')]
+        quote = {'instrument_name': 'BTC-TEST-C', 'creation_timestamp': self.now,
+                 'bid_price': .02, 'ask_price': .021, 'mark_price': .0205, 'mark_iv': 40,
+                 'open_interest': 100, 'volume': 20}
+        self.client.summaries.return_value = [quote, dict(quote, instrument_name='BTC-TEST-P',
+                                                          creation_timestamp=self.now - 300001)]
+        rows = option_chain(self.client, 'BTC', self.now)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['Strike USD'], 85000)
+        self.assertEqual(rows[0]['CALL bid'], .02)
+        self.assertIsNone(rows[0]['PUT bid'])
+        self.assertEqual(rows[0]['PUT quote status'], 'STALE')
+        with self.assertRaises(ValueError):
+            option_chain(self.client, 'GOLD', self.now)

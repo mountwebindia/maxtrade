@@ -118,6 +118,7 @@ class DashboardTests(unittest.TestCase):
                 patch("maxtrade.research.fetch_news", side_effect=ValueError("news unavailable")), \
                 patch("maxtrade.research.fetch_derivatives", side_effect=ValueError("derivatives unavailable")), \
                 patch("maxtrade.history.ScanHistory") as history:
+            history.return_value.worker_status.return_value = None
             chart_client.return_value.spot_candles.return_value = candles
             app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=20)
             app.session_state["navigation"] = "Chart"
@@ -223,7 +224,8 @@ class DashboardTests(unittest.TestCase):
                  "Premium currency": "BTC", "Price": .0205, "Bid": .02, "Ask": .021,
                  "Reason": "Research candidate"}]
         with patch("maxtrade.options.scan_options", return_value=rows) as scanner, \
-                patch("maxtrade.options.DeribitClient"), patch("maxtrade.history.ScanHistory"):
+                patch("maxtrade.options.DeribitClient"), patch("maxtrade.history.ScanHistory") as history:
+            history.return_value.worker_status.return_value = None
             app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=20).run()
             app.radio[0].set_value("Options").run()
             app.button[0].click().run()
@@ -238,7 +240,8 @@ class DashboardTests(unittest.TestCase):
         rows = [{"Market": "BTCUSDT", "Signal": "LONG", "Reason": "Trend aligned"},
             {"Market": "ETHUSDT", "Signal": "NO TRADE", "Reason": "No trend"}]
         with patch("maxtrade.scanner.scan_spot", return_value=rows), \
-            patch("maxtrade.coindcx.CoinDCXClient"), patch("maxtrade.history.ScanHistory"):
+            patch("maxtrade.coindcx.CoinDCXClient"), patch("maxtrade.history.ScanHistory") as history:
+            history.return_value.worker_status.return_value = None
             app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=20).run()
             app.button[0].click().run()
             next(widget for widget in app.selectbox if widget.label == "Signal filter").select("Candidates").run()

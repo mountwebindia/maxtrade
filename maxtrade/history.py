@@ -39,6 +39,8 @@ class ScanHistory:
                 )
             """)
             connection.execute("CREATE TABLE IF NOT EXISTS research_alerts (id INTEGER PRIMARY KEY, fingerprint TEXT UNIQUE NOT NULL, created_at TEXT NOT NULL, symbol TEXT NOT NULL, message TEXT NOT NULL)")
+            connection.execute("CREATE TABLE IF NOT EXISTS telegram_deliveries (alert_id INTEGER NOT NULL, destination TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, attempted_at TEXT, sent_at TEXT, error TEXT, PRIMARY KEY(alert_id,destination))")
+            connection.execute("CREATE TABLE IF NOT EXISTS worker_status (id INTEGER PRIMARY KEY CHECK(id=1), finished_at TEXT NOT NULL, mode TEXT NOT NULL, failures INTEGER NOT NULL)")
             connection.execute("CREATE TABLE IF NOT EXISTS predictions (fingerprint TEXT PRIMARY KEY, scan_id INTEGER NOT NULL, created_at TEXT NOT NULL, product TEXT NOT NULL, pair TEXT NOT NULL, action TEXT NOT NULL, start_ms INTEGER NOT NULL, stop REAL NOT NULL, target REAL NOT NULL, status TEXT NOT NULL DEFAULT 'PENDING', result_json TEXT)")
 
     def _connect(self) -> sqlite3.Connection:
@@ -127,6 +129,59 @@ class ScanHistory:
     def predictions(self) -> list[dict[str, Any]]:
         with closing(self._connect()) as connection:
             return [dict(row) for row in connection.execute("SELECT * FROM predictions ORDER BY created_at DESC")]
+
+    def claim_notifications(self, destination: str, now: datetime, limit: int = 20) -> list[dict[str, Any]]:
+        from datetime import timedelta
+        current = now.astimezone(timezone.utc).isoformat()
+        cutoff = (now - timedelta(hours=24)).astimezone(timezone.utc).isoformat()
+        retry = (now - timedelta(minutes=5)).astimezone(timezone.utc).isoformat()
+        with closing(self._connect()) as connection, connection:
+            connection.execute('BEGIN IMMEDIATE')
+            rows = connection.execute('''SELECT a.* FROM research_alerts a
+                LEFT JOIN telegram_deliveries d ON d.alert_id=a.id AND d.destination=?
+                WHERE a.created_at>=? AND d.sent_at IS NULL
+                AND (d.attempted_at IS NULL OR d.attempted_at<=?)
+                ORDER BY a.id LIMIT ?''', (destination, cutoff, retry, limit)).fetchall()
+            for row in rows:
+                connection.execute('''INSERT INTO telegram_deliveries (alert_id,destination,attempts,attempted_at)
+                    VALUES (?,?,1,?) ON CONFLICT(alert_id,destination) DO UPDATE
+                    SET attempts=attempts+1,attempted_at=excluded.attempted_at''', (row['id'], destination, current))
+            return [dict(row) for row in rows]
+
+    def finish_notification(self, alert_id: int, destination: str, now: datetime, error: str | None = None) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute('UPDATE telegram_deliveries SET sent_at=?,error=? WHERE alert_id=? AND destination=?',
+                               (None if error else now.astimezone(timezone.utc).isoformat(), error, alert_id, destination))
+
+    def notification_status(self) -> list[dict[str, Any]]:
+        with closing(self._connect()) as connection:
+            return [dict(row) for row in connection.execute('''SELECT a.symbol,d.attempts,d.attempted_at,d.sent_at,d.error
+                FROM telegram_deliveries d JOIN research_alerts a ON a.id=d.alert_id
+                ORDER BY d.attempted_at DESC LIMIT 20''')]
+
+    def save_worker_status(self, now: datetime, mode: str, failures: int) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute('INSERT OR REPLACE INTO worker_status VALUES (1,?,?,?)',
+                               (now.astimezone(timezone.utc).isoformat(), mode, failures))
+
+    def worker_status(self) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute('SELECT * FROM worker_status WHERE id=1').fetchone()
+            return dict(row) if row else None
+
+    def daily_backup(self, now: datetime) -> Path:
+        directory = self.path.parent / 'backups'
+        directory.mkdir(parents=True, exist_ok=True)
+        destination = directory / f"paper-{now.astimezone(timezone.utc).date().isoformat()}.sqlite3"
+        if destination.exists():
+            return destination
+        temporary = destination.with_suffix('.tmp')
+        with closing(self._connect()) as source, closing(sqlite3.connect(temporary)) as backup:
+            source.backup(backup)
+            if backup.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
+                raise ValueError('Backup integrity check failed')
+        temporary.replace(destination)
+        return destination
 
     def save_outcome(self, fingerprint: str, outcome: dict[str, Any]) -> None:
         payload = json.dumps(outcome, allow_nan=False)

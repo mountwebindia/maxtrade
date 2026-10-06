@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from maxtrade.backtest import ReplaySettings, replay
+from maxtrade.charts import candle_figure
 from maxtrade.signals import TradeSignal
 
 
@@ -54,3 +55,12 @@ class ReplayTests(unittest.TestCase):
         trade = result["trades"].iloc[0]
         self.assertLess(trade["Size"], 0)
         self.assertLessEqual(abs(trade["Size"]) * trade["EntryPrice"], 2500)
+
+    def test_chart_has_single_labels_and_one_marker_per_setup(self):
+        for options, expected in [(False, ("BUY", "SELL")), (True, ("CALL", "PUT"))]:
+            with self.subTest(options=options):
+                figure = candle_figure(self.candles(), self.signals(), "1h", options=options)
+                markers = [trace for trace in figure.data if trace.type == "scatter" and trace.mode == "markers"]
+                self.assertEqual(tuple(trace.name for trace in markers), expected)
+                self.assertEqual(len(markers[0].x), 1)
+                self.assertEqual(len(markers[1].x), 0)

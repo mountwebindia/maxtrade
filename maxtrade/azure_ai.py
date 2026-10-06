@@ -99,7 +99,8 @@ def render_azure_settings() -> None:
     try:
         ledger = PaperLedger()
         modes = ['Deterministic', 'Azure-assisted']
-        mode = st.radio('Research mode', modes, index=modes.index(ledger.ai_mode()), horizontal=True, key='ai_mode')
+        mode = st.radio('Research mode', modes, index=modes.index(ledger.ai_mode()), horizontal=True,
+                key='ai_mode', width='stretch')
         if st.button('Save AI mode', icon=':material/save:', key='ai_mode_save'):
             if mode == 'Azure-assisted' and config is None:
                 st.warning('Configure Azure secrets before selecting Azure-assisted mode.')

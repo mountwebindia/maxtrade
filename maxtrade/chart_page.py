@@ -8,7 +8,7 @@ import streamlit as st
 from maxtrade.charts import candle_figure, chart_analysis
 from maxtrade.backtest import ReplaySettings, replay
 from maxtrade.coindcx import CoinDCXClient, INTERVAL_MS, normalize_candles
-from maxtrade.options import DeribitClient, scan_options
+from maxtrade.options import DeribitClient, scan_options, render_option_chain
 from maxtrade.presentation import display_number, signal_card
 from maxtrade.scanner import QUOTE_CURRENCIES
 from maxtrade.research import render_market_research
@@ -107,8 +107,8 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool) ->
     display_candles = snapshot["display_candles"]
     forming = int(display_candles[-1]["time"]) > int(candles[-1]["time"])
     st.caption(f"{'Auto-refresh · 10s' if live else 'Paused snapshot'} · Last price {display_number(display_candles[-1]['close'])} · {'Forming candle' if forming else 'No forming candle from feed'}")
-    label = {"LONG": "CALL BIAS", "SHORT": "PUT BIAS", "NO TRADE": "NO TRADE"}[latest.action] if product == "Options" else {
-        "LONG": "BUY / LONG", "SHORT": "SELL / SHORT", "NO TRADE": "NO TRADE"}[latest.action]
+    label = {"LONG": "CALL", "SHORT": "PUT", "NO TRADE": "NO TRADE"}[latest.action] if product == "Options" else {
+        "LONG": "BUY", "SHORT": "SELL", "NO TRADE": "NO TRADE"}[latest.action]
     st.subheader(f"{'Snapshot: ' if stale else ''}{label}")
     st.caption(latest.reason)
     figure = candle_figure(display_candles, analyses, interval, options=product == "Options")
@@ -126,6 +126,7 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool) ->
             for label, value in [("Entry", latest.entry), ("Stop", latest.stop), ("Target", latest.target)])
             + '</div>', unsafe_allow_html=True)
     if product == "Options":
+        render_option_chain(pair, 'chart')
         st.subheader("Contract watchlist")
         st.caption("CALL/PUT bias is underlying direction only. WATCH labels also require current contract liquidity and delta filters; not premium entry/exit signals.")
         if snapshot.get("contract_error"):

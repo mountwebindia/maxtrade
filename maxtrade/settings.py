@@ -11,6 +11,25 @@ AZURE_DEFAULT_DEPLOYMENT = "gpt-6-astra-2"
 
 
 @dataclass(frozen=True)
+class TelegramConfig:
+    token: str = field(repr=False)
+    chat_id: str
+
+
+def telegram_config(environment: Mapping[str, Any] | None = None,
+                    secrets: Mapping[str, Any] | None = None) -> TelegramConfig | None:
+    environment = os.environ if environment is None else environment
+    secrets = {} if secrets is None else secrets
+    token, chat_id = [str(environment.get(name) or secrets.get(name) or '').strip()
+                      for name in ('TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID')]
+    if not token and not chat_id:
+        return None
+    if not re.fullmatch(r'\d+:[A-Za-z0-9_-]+', token) or not re.fullmatch(r'-?\d+', chat_id):
+        raise ValueError('Telegram configuration is incomplete or invalid; add bot token and numeric chat ID privately.')
+    return TelegramConfig(token, chat_id)
+
+
+@dataclass(frozen=True)
 class AzureOpenAIConfig:
     endpoint: str
     deployment: str

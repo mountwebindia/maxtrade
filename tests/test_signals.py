@@ -25,7 +25,7 @@ class SignalTests(unittest.TestCase):
         self.assertEqual(len(figure.layout.shapes), 6)
         options_figure = candle_figure(candles, analyses, "1h", options=True)
         self.assertEqual(len(options_figure.layout.shapes), 3)
-        self.assertIn("CALL bias", [trace.name for trace in options_figure.data])
+        self.assertIn("CALL", [trace.name for trace in options_figure.data])
 
     def test_chart_rejects_gaps_and_invalid_open(self):
         candles = make_candles([100] * 60)

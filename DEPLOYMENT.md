@@ -107,6 +107,19 @@ On a provisioned VPS, an operator can install this crontab entry after adjusting
 
 Jobs claim each symbol once per UTC 15-minute slot; concurrent/repeated runs skip claimed slots. Failed slots are retried only on the next scheduled slot. Each provider request has a timeout and news downloads are bounded. Configure log rotation, disk-space and nonzero-exit monitoring. A paper reconciliation failure is logged while research continues; missing bars require recovery before advancing an open position. This is not a continuously running exchange watcher.
 
-History displays the latest 50 alerts and 20 reports; older rows remain stored. Review disk usage monthly and establish an explicit retention policy rather than silently deleting audit evidence. Back up with SQLite's online backup API/CLI `.backup`, not a raw file copy during writes; encrypt backups, store off-host and test restoration with the app stopped. External notifications require a chosen destination and separately configured credentials; only internal alerts are implemented here.
+History displays the latest 50 alerts and 20 reports; older rows remain stored. Each completed worker cycle saves a heartbeat and creates the first verified SQLite online backup of the UTC day in `data/backups/paper-YYYY-MM-DD.sqlite3`. Settings warns when the last completed cycle is over 30 minutes old. Same-disk backups are not disaster recovery, and Streamlit Cloud may lose both primary and backup files. Review disk usage, encrypt and replicate backups off-host, and test restoration with the app stopped.
+
+Aligned autonomous technical signals enter the forward-accuracy ledger even when paper risk blocks them. Worker cycles score unresolved outcomes from completed hourly candles. Net paper win rate uses closed trades after modeled costs; technical target accuracy uses gross signal scenarios. Daily reports contain a next-day provisional result and a 48-hour update. All dates use UTC; reports run on the first available cycle, not a guaranteed wall-clock delivery.
+
+## Telegram paper alerts
+
+1. Create a bot privately through Telegram's verified **@BotFather** using `/newbot`. Keep its token private.
+2. Open your bot and send `/start`. Obtain the numeric chat ID privately from Telegram Bot API `getUpdates`; group IDs may be negative. Never paste the token or token-bearing request URL into chat, screenshots or logs.
+3. Preserve existing secrets and add `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` as quoted strings in Streamlit **Manage app > Settings > Secrets**. Set the same variables in the independent worker's private service environment. Cloud secrets do not propagate to a Mac or VPS.
+4. Use **Settings > Test Telegram delivery**. Configuration presence alone does not verify delivery.
+
+Messages include PAPER ONLY research decisions, queued/open/closed/cancelled positions and daily reports. Attempts and acknowledgements persist per alert and destination. Failed sends retry after five minutes on a subsequent cycle. At most 20 messages are sent per cycle; only alerts created in the last 24 hours are eligible, while older records remain saved. Delivery is at-least-once: a crash after Telegram accepts a message but before local acknowledgement can cause a duplicate. Outages can prevent or delay delivery.
+
+Credentials are not configured by publishing source. Do not grant the bot exchange permissions. Ordinary Telegram chats are not end-to-end encrypted; choose a private destination. A managed persistent host, off-host backups and private service configuration remain prerequisites for Mac-independent 24/7 operation.
 
 Before using paper outcomes operationally, verify scheduler uptime, shared path, source quotas/terms, backup restoration and forward evaluation. No profitability or live-trading readiness is implied by software tests.

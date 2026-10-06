@@ -72,6 +72,79 @@ class DeribitClient:
         return hourly
 
 
+def option_chain(client: DeribitClient, currency: str, now_ms: int | None = None) -> list[dict[str, Any]]:
+    if currency not in {'BTC', 'ETH'}:
+        raise ValueError('Only BTC and ETH option chains are supported')
+    now_ms = int(time() * 1000) if now_ms is None else now_ms
+    instruments = {item['instrument_name']: item for item in client.instruments(currency)
+                   if item.get('is_active') is True and item.get('state') == 'open'
+                   and item.get('kind') == 'option' and item.get('base_currency') == currency
+                   and item.get('quote_currency') == currency
+                   and item.get('option_type') in {'call', 'put'}
+                   and finite_number(item['expiration_timestamp']) > now_ms}
+    rows = {}
+    for quote in client.summaries(currency):
+        instrument = instruments.get(quote.get('instrument_name'))
+        if not instrument:
+            continue
+        expiry = datetime.fromtimestamp(instrument['expiration_timestamp'] / 1000, timezone.utc).isoformat()
+        strike = finite_number(instrument['strike'])
+        if strike <= 0:
+            raise ValueError('Invalid option strike')
+        row = rows.setdefault((expiry, strike), {'Expiry UTC': expiry, 'Strike USD': strike})
+        side = instrument['option_type'].upper()
+        row[f'{side} contract'] = instrument['instrument_name']
+        age = now_ms - finite_number(quote['creation_timestamp'])
+        row[f'{side} quote status'] = 'CURRENT' if -30000 <= age <= 300000 else 'STALE'
+        row[f'{side} quote UTC'] = datetime.fromtimestamp(quote['creation_timestamp'] / 1000, timezone.utc).isoformat()
+        for field, title in [('bid_price', 'bid'), ('ask_price', 'ask'), ('mark_price', 'mark'),
+                             ('mark_iv', 'IV %'), ('open_interest', 'OI'), ('volume', 'volume')]:
+            value = quote.get(field)
+            number = finite_number(value) if value is not None else None
+            if number is not None and number < 0:
+                raise ValueError('Invalid negative option quote')
+            row[f'{side} {title}'] = number if -30000 <= age <= 300000 else None
+    if not rows:
+        raise ValueError('No active option chain quotes available')
+    return [rows[key] for key in sorted(rows)]
+
+
+def render_option_chain(currency: str, key: str) -> None:
+    import pandas as pd
+    import streamlit as st
+
+    st.subheader(f'{currency} option chain')
+    st.caption(f'Deribit public quotes · premiums in {currency} · strike in USD · CoinDCX options API not connected')
+    snapshot_key = f'{key}_chain_snapshot'
+    if st.button('Load / refresh option chain', icon=':material/refresh:', key=f'{key}_chain_load', width='stretch'):
+        st.session_state.pop(snapshot_key, None)
+        client = DeribitClient()
+        try:
+            with st.spinner('Loading CALL and PUT quotes...'):
+                rows = option_chain(client, currency)
+            st.session_state[snapshot_key] = {'currency': currency, 'rows': rows,
+                                             'fetched': datetime.now(timezone.utc).isoformat()}
+        except (requests.RequestException, KeyError, TypeError, ValueError) as error:
+            st.warning(f'Option chain unavailable: {error}')
+        finally:
+            client.session.close()
+    snapshot = st.session_state.get(snapshot_key)
+    if not snapshot or snapshot['currency'] != currency:
+        return
+    expiry = st.selectbox('Expiry (UTC)', sorted({row['Expiry UTC'] for row in snapshot['rows']}), key=f'{key}_chain_expiry')
+    rows = [row for row in snapshot['rows'] if row['Expiry UTC'] == expiry]
+    columns = ['CALL bid', 'CALL ask', 'CALL mark', 'CALL IV %', 'CALL OI', 'Strike USD',
+               'PUT OI', 'PUT IV %', 'PUT mark', 'PUT bid', 'PUT ask']
+    st.dataframe(pd.DataFrame(rows).reindex(columns=columns), hide_index=True, width='stretch')
+    age = (datetime.now(timezone.utc) - datetime.fromisoformat(snapshot['fetched'])).total_seconds()
+    if age > 60:
+        st.warning('Option chain snapshot is older than one minute; refresh quotes.')
+    st.caption(f"Fetched {snapshot['fetched']} · stale provider quotes are blank · OI/volume in base currency · not executable prices")
+    st.download_button('Option chain CSV', pd.DataFrame(rows).to_csv(index=False),
+                       file_name=f'{currency.lower()}-option-chain.csv', mime='text/csv',
+                       icon=':material/download:', key=f'{key}_chain_csv')
+
+
 def scan_options(client: DeribitClient, currency: str, interval: str, limit: int,
                  progress: Callable[[int, int, str], None] | None = None,
                  now_ms: int | None = None) -> list[dict[str, Any]]:

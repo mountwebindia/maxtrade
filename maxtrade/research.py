@@ -243,16 +243,22 @@ def render_paper_account() -> None:
             st.rerun()
         if st.button("Run autonomous research cycle", icon=":material/radar:", key="paper_cycle", disabled=not enabled):
             from maxtrade.worker import run_once
-            from maxtrade.settings import azure_openai_config
+            from maxtrade.settings import azure_openai_config, telegram_config
             configuration = None
+            try:
+                secrets = st.secrets.to_dict()
+            except (FileNotFoundError, st.errors.StreamlitSecretNotFoundError):
+                secrets = {}
             if ledger.ai_mode() == 'Azure-assisted':
-                try:
-                    secrets = st.secrets.to_dict()
-                except (FileNotFoundError, st.errors.StreamlitSecretNotFoundError):
-                    secrets = {}
                 configuration = azure_openai_config(secrets=secrets)
+            try:
+                notifications = telegram_config(secrets=secrets)
+            except ValueError:
+                st.warning('Telegram configuration invalid; paper research will continue without delivery.')
+                notifications = None
             with st.spinner("Researching BTC and ETH; checking paper risk and positions..."):
-                failures = run_once(ledger.path, ["B-BTC_USDT", "B-ETH_USDT"], ai_config=configuration)
+                failures = run_once(ledger.path, ["B-BTC_USDT", "B-ETH_USDT"], ai_config=configuration,
+                                    notification_config=notifications)
             if failures:
                 st.warning(f"Cycle finished with {failures} provider/reconciliation failures. Check worker logs.")
             else:
@@ -284,8 +290,18 @@ def render_paper_account() -> None:
         st.caption("Win = closed trade with positive net P&L after modeled fees/slippage. Breakeven counts as non-win; pending/open/cancelled excluded. Signal target accuracy is separate. No profitability guarantee.")
         positions = ledger.positions()
         if positions:
-            columns = ("id", "symbol", "state", "submitted_at", "entry", "exit", "quantity", "pnl", "reason")
+            columns = ("id", "symbol", "state", "submitted_at", "opened_at", "closed_at", "entry", "stop", "target", "exit", "quantity", "pnl", "reason")
             st.dataframe([{key: row[key] for key in columns} for row in positions], hide_index=True, width="stretch")
+            import pandas as pd
+            st.download_button('Paper trade records CSV', pd.DataFrame(positions).to_csv(index=False),
+                               file_name='paper-trade-records.csv', mime='text/csv', icon=':material/download:',
+                               key='paper_records_csv')
+        from maxtrade.history import ScanHistory
+        status = ScanHistory(ledger.path).worker_status()
+        if status:
+            st.caption(f"Last cycle: {status['finished_at']} · mode: {status['mode']} · failures: {status['failures']}")
+            if (datetime.now(timezone.utc) - datetime.fromisoformat(status['finished_at'])).total_seconds() > 1800:
+                st.warning('No completed worker cycle in the last 30 minutes.')
         if st.button("Reconcile paper positions", icon=":material/sync:"):
             from maxtrade.coindcx import CoinDCXClient
 

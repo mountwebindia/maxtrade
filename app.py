@@ -9,7 +9,7 @@ import streamlit as st
 from maxtrade.coindcx import CoinDCXClient
 from maxtrade.chart_page import render_chart_page
 from maxtrade.history import ScanHistory
-from maxtrade.options import DeribitClient, scan_options
+from maxtrade.options import DeribitClient, scan_options, render_option_chain
 from maxtrade.presentation import signal_card
 from maxtrade.scanner import scan_futures, scan_spot
 from maxtrade.settings import credential_status
@@ -50,14 +50,12 @@ st.markdown(
     .research-status { color: #137b69; background: #e1f2ed; padding: .3rem .5rem; font-size: .7rem; font-weight: 600; border-radius: 4px; white-space: nowrap; }
     [data-testid="stRadio"] [role="radiogroup"] { width: 100%; gap: .25rem; flex-wrap: nowrap; }
     [data-testid="stRadio"] [role="radiogroup"] > div { flex: 1; min-width: 0; }
-    [data-testid="stRadio"] label { flex: 1; justify-content: center; background: #e6edf0; padding: .5rem; border-radius: 6px; min-height: 44px; }
-    [data-testid="stRadioOption"] { width: 100%; }
+    [data-testid="stRadio"] [data-testid="stRadioOption"] { flex: 1 1 0; min-width: 0; width: 100%; justify-content: center; background: #e6edf0; padding: .5rem; border-radius: 6px; min-height: 44px; }
     [data-testid="stRadioOption"] > div { justify-content: center; }
     [data-testid="stRadioOption"] > div > div:not([data-testid="stMarkdownContainer"]) { display: none; }
-    [data-testid="stRadio"] label:has(input:checked) { background: #192b30; color: white; }
-    [data-testid="stRadio"] label:has(input:focus-visible) { outline: 2px solid #137b69; outline-offset: 2px; }
-    [data-testid="stRadio"] label > div:first-child { display: none; }
-    [data-testid="stRadio"] label p { font-size: .8rem; }
+    [data-testid="stRadioOption"]:has(input:checked) { background: #192b30; color: white; }
+    [data-testid="stRadioOption"]:has(input:focus-visible) { outline: 2px solid #137b69; outline-offset: 2px; }
+    [data-testid="stRadioOption"] p { font-size: .8rem; overflow-wrap: normal; }
     [data-testid="stButton"] button[kind="primary"] { background: #137b69; border-color: #137b69; min-height: 48px; border-radius: 6px; }
     [data-testid="stSelectbox"] p { font-size: .75rem; }
     [data-testid="stSelectbox"] [data-baseweb="select"] > div { border-radius: 6px; min-height: 44px; }
@@ -154,6 +152,8 @@ with signals_tab:
     else:
         st.caption(f"CoinDCX · {product.lower()} · {interval} candles")
     scan = st.button("Scan markets now", type="primary", width="stretch", icon=":material/radar:")
+    if product == 'Options':
+        render_option_chain(currency, 'signals')
 
 def show_signals(rows: list[dict], key: str) -> None:
     tools = st.columns([1, 1])
@@ -291,8 +291,10 @@ with history_tab:
 with api_tab:
     from maxtrade.research import render_paper_account
     from maxtrade.azure_ai import render_azure_settings
+    from maxtrade.notifications import render_telegram_settings
 
     render_azure_settings()
+    render_telegram_settings()
     render_paper_account()
     st.markdown("#### CoinDCX configuration")
     try:

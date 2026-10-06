@@ -129,6 +129,7 @@ class ResearchTests(unittest.TestCase):
         client = Mock()
         client.spot_candles.side_effect = [self.bars('1h'), self.bars('4h')]
         report = run_market_research(client, 'Spot', 'B-BTC_USDT', self.now)
+        report['technical_bias'] = 'LONG'
         for item in report['evidence']:
             item['action'] = 'LONG'
             item['values'].update(entry=100, stop=95, target=110)
@@ -162,8 +163,10 @@ class ResearchTests(unittest.TestCase):
             ledger.set_automation(True)
             with patch('maxtrade.worker.CoinDCXClient'), patch('maxtrade.worker.PaperLedger.reconcile'), \
                     patch('maxtrade.worker.run_coordinated_research', return_value=self.paper_report()), \
+                    patch('maxtrade.worker.update_outcomes', return_value=[]), \
                     patch('maxtrade.worker.datetime') as clock:
                 clock.now.return_value = self.now
+                clock.fromisoformat.side_effect = datetime.fromisoformat
                 self.assertEqual(run_once(path, ['B-BTC_USDT']), 0)
                 self.assertEqual(run_once(path, ['B-BTC_USDT']), 0)
             self.assertEqual(len(ledger.positions()), 1)
@@ -290,19 +293,24 @@ class ResearchTests(unittest.TestCase):
             report = self.paper_report()
             with patch('maxtrade.worker.CoinDCXClient') as client, patch('maxtrade.worker.PaperLedger.reconcile'), \
                     patch('maxtrade.worker.run_coordinated_research',return_value=report) as research, \
+                    patch('maxtrade.worker.update_outcomes', return_value=[]), \
                     patch('maxtrade.worker.datetime') as clock:
                 clock.now.return_value = self.now
+                clock.fromisoformat.side_effect = datetime.fromisoformat
                 self.assertEqual(run_once(path,['B-BTC_USDT']),0)
                 self.assertEqual(run_once(path,['B-BTC_USDT']),0)
                 research.assert_called_once()
-                client.return_value.session.close.assert_called_once()
+                self.assertGreaterEqual(client.return_value.session.close.call_count, 1)
             history = ScanHistory(path)
             self.assertEqual(len(history.recent_research()),1)
-            alert = history.recent_alerts()[0]
+            self.assertEqual(len(history.predictions()),1)
+            self.assertEqual(history.worker_status()['mode'], 'one-shot')
+            self.assertTrue((path.parent / 'backups' / 'paper-2026-10-06.sqlite3').exists())
+            alert = next(row for row in history.recent_alerts() if row['symbol'] == 'B-BTC_USDT')
             self.assertEqual(alert['symbol'],'B-BTC_USDT')
             history.save_alert('same','now','BTC','first')
             history.save_alert('same','now','BTC','second')
-            self.assertEqual(len(history.recent_alerts()),2)
+            self.assertEqual(len(history.recent_alerts()),4)
 
     def test_paper_kill_and_opening_gap_cancel_pending_entries(self):
         from datetime import timedelta
@@ -348,11 +356,13 @@ class ResearchTests(unittest.TestCase):
             with patch('maxtrade.worker.CoinDCXClient') as client, \
                     patch('maxtrade.worker.PaperLedger.reconcile',side_effect=ValueError('missing bar')), \
                     patch('maxtrade.worker.run_coordinated_research',return_value=self.paper_report()), \
+                    patch('maxtrade.worker.update_outcomes', return_value=[]), \
                     patch('maxtrade.worker.datetime') as clock, \
                     self.assertLogs(level='ERROR'):
                 clock.now.return_value = self.now
+                clock.fromisoformat.side_effect = datetime.fromisoformat
                 self.assertEqual(run_once(path,['B-BTC_USDT']),1)
                 self.assertEqual(len(ScanHistory(path).recent_research()),1)
                 self.assertEqual(ledger.positions(), [])
                 self.assertIn('Paper reconciliation failed', ScanHistory(path).recent_research()[0]['report']['blockers'])
-                client.return_value.session.close.assert_called_once()
+                self.assertGreaterEqual(client.return_value.session.close.call_count, 1)

@@ -44,8 +44,8 @@ def candle_figure(candles: list[dict[str, Any]], analyses: list[TradeSignal],
         figure.add_trace(go.Scatter(x=indicator_dates, y=[getattr(signal, attribute) for signal in analyses],
                                    name=name, mode="lines", line={"color": color, "width": 1.5}), row=1, col=1)
     for action, label, color, symbol in [
-        ("LONG", "CALL bias" if options else "BUY / LONG", "#137b69", "triangle-up"),
-        ("SHORT", "PUT bias" if options else "SELL / SHORT", "#bf4545", "triangle-down"),
+        ("LONG", "CALL" if options else "BUY", "#137b69", "triangle-up"),
+        ("SHORT", "PUT" if options else "SELL", "#bf4545", "triangle-down"),
     ]:
         indices = [index for index, signal in enumerate(analyses) if signal.action == action
                    and index > 0 and analyses[index - 1].action != action]
