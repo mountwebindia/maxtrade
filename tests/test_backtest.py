@@ -56,11 +56,11 @@ class ReplayTests(unittest.TestCase):
         self.assertLess(trade["Size"], 0)
         self.assertLessEqual(abs(trade["Size"]) * trade["EntryPrice"], 2500)
 
-    def test_chart_has_single_labels_and_one_marker_per_setup(self):
-        for options, expected in [(False, ("BUY", "SELL")), (True, ("CALL", "PUT"))]:
+    def test_chart_has_no_signal_markers_for_either_market(self):
+        for options in (False, True):
             with self.subTest(options=options):
                 figure = candle_figure(self.candles(), self.signals(), "1h", options=options)
                 markers = [trace for trace in figure.data if trace.type == "scatter" and trace.mode == "markers"]
-                self.assertEqual(tuple(trace.name for trace in markers), expected)
-                self.assertEqual(len(markers[0].x), 1)
-                self.assertEqual(len(markers[1].x), 0)
+                self.assertEqual(markers, [])
+                self.assertFalse({"BUY", "SELL", "CALL", "PUT"}.intersection(
+                    trace.name for trace in figure.data))

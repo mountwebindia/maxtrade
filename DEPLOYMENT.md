@@ -52,6 +52,17 @@ Paper performance uses all closed ledger positions, positive net P&L after model
 
 ### Temporary local operation
 
+The macOS LaunchAgent installer provides login startup and process restart:
+
+```sh
+.venv/bin/python scripts/install_worker.py install
+.venv/bin/python scripts/install_worker.py status
+```
+
+Before activating cycles, privately create `.streamlit/secrets.toml` from the example and add the same Azure and Telegram values used on Cloud. Include local login settings for the local dashboard. Never send credentials through chat. Run `chmod 600 .streamlit/secrets.toml`, then `.venv/bin/python scripts/install_worker.py restart`. The installed service requires both integrations, reloads private configuration every cycle, and forces Azure-assisted review. Missing/invalid configuration prevents the entire cycle, including open-position reconciliation; do not rely on monitoring until a completed heartbeat is verified. It does not automatically change the paper automation or kill-switch setting.
+
+The service uses the existing local `data/scan_history.sqlite3`, not the Cloud ledger. A database-specific OS lock prevents duplicate CLI workers. Logs are in `data/worker.stdout.log` and `data/worker.stderr.log`; monitor disk usage and arrange log rotation for prolonged operation. `scripts/install_worker.py stop` unloads the service; `install` loads it again. Do not run manual watch mode alongside the service. Login startup is not boot-before-login startup; sleep, logout, shutdown and loss of connectivity interrupt operation. Keep the Mac awake/online, or move both dashboard and worker to a managed VPS for Mac-independent 24/7 service. No hosting purchase or Cloud-to-local credential transfer is performed.
+
 Until the VPS is available, run the dashboard and worker on the same Mac and database. From the repository root, start the dashboard with its existing VS Code task and run the worker in a separate terminal:
 
 ```sh

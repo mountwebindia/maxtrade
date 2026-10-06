@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import requests
+import pandas as pd
 import streamlit as st
 
 from maxtrade.charts import candle_figure, chart_analysis
@@ -42,7 +43,8 @@ def render_chart_page() -> None:
                 st.error(f"Market discovery unavailable: {error}")
             finally:
                 client.session.close()
-        default_catalog = {"BTCUSDT": "B-BTC_USDT"} if product == "Spot" else {"B-BTC_USDT": "B-BTC_USDT"}
+        default_catalog = {"BTCUSDT": "B-BTC_USDT", "ETHUSDT": "B-ETH_USDT"} if product == "Spot" else {
+            "B-BTC_USDT": "B-BTC_USDT", "B-ETH_USDT": "B-ETH_USDT"}
         catalog = st.session_state.get(f"chart_catalog_{product}", default_catalog)
         names = sorted(catalog)
         preferred = "BTCUSDT" if product == "Spot" else "B-BTC_USDT"
@@ -50,9 +52,17 @@ def render_chart_page() -> None:
                           key=f"chart_market_{product}")
         pair = catalog[market]
         st.caption(f"CoinDCX · {product.lower()} · {market}")
-    render_market_research(product, pair)
+    toolbar = st.columns(3)
+    toolbar[0].selectbox("Chart style", ["Candles", "Line", "Area"], key="chart_style")
+    toolbar[1].selectbox("Chart theme", ["Dark", "Light"], key="chart_theme")
+    toolbar[2].selectbox("Visible candles", [80, 40, 120], key="chart_visible")
+    st.multiselect("Indicators", ["EMA 20", "EMA 50", "Volume", "RSI 14"],
+                   default=["EMA 20", "EMA 50", "Volume", "RSI 14"], key="chart_indicators")
+    st.toggle("Log price scale", key="chart_log")
     live = st.toggle("Live updates · 10s", value=True, key="chart_live")
     st.fragment(run_every="10s" if live else None)(render_chart_snapshot)(product, interval, pair, live)
+    with st.expander("Market research", icon=":material/radar:"):
+        render_market_research(product, pair)
 
 
 def render_chart_snapshot(product: str, interval: str, pair: str, live: bool) -> None:
@@ -107,24 +117,31 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool) ->
     display_candles = snapshot["display_candles"]
     forming = int(display_candles[-1]["time"]) > int(candles[-1]["time"])
     st.caption(f"{'Auto-refresh · 10s' if live else 'Paused snapshot'} · Last price {display_number(display_candles[-1]['close'])} · {'Forming candle' if forming else 'No forming candle from feed'}")
-    label = {"LONG": "CALL", "SHORT": "PUT", "NO TRADE": "NO TRADE"}[latest.action] if product == "Options" else {
-        "LONG": "BUY", "SHORT": "SELL", "NO TRADE": "NO TRADE"}[latest.action]
-    st.subheader(f"{'Snapshot: ' if stale else ''}{label}")
-    st.caption(latest.reason)
-    figure = candle_figure(display_candles, analyses, interval, options=product == "Options")
-    figure.update_layout(uirevision="|".join(selection))
+    last = display_candles[-1]
+    metrics = st.columns(4)
+    for column, field in zip(metrics, ("open", "high", "low", "close")):
+        column.metric(field.upper(), display_number(last[field]))
+    style = st.session_state.get("chart_style", "Candles")
+    theme = st.session_state.get("chart_theme", "Dark")
+    indicators = tuple(st.session_state.get("chart_indicators", ["EMA 20", "EMA 50", "Volume", "RSI 14"]))
+    logarithmic = st.session_state.get("chart_log", False)
+    visible = st.session_state.get("chart_visible", 80)
+    figure = candle_figure(display_candles, analyses, interval, options=product == "Options",
+                           chart_type=style, indicators=indicators, theme=theme,
+                           logarithmic=logarithmic, visible_bars=visible)
+    figure.update_layout(uirevision=repr((selection, style, indicators, logarithmic, visible)),
+                          editrevision="|".join(selection))
     st.plotly_chart(figure,
-                    width="stretch", config={"displaylogo": False, "scrollZoom": False,
-                                              "modeBarButtonsToRemove": ["select2d", "lasso2d"]}, key="candle_chart")
-    st.markdown('<div class="risk-grid">' + ''.join(
-        f'<div><span>{label}</span><strong>{display_number(value, decimals)}</strong></div>'
-        for label, value, decimals in [("RSI 14", latest.rsi, 1), ("EMA 20", latest.ema_fast, 4),
-                                      ("EMA 50", latest.ema_slow, 4)]) + '</div>', unsafe_allow_html=True)
-    if product != "Options" and latest.action != "NO TRADE":
-        st.markdown('<div class="risk-grid">' + ''.join(
-            f'<div><span>{label}</span><strong>{display_number(value)}</strong></div>'
-            for label, value in [("Entry", latest.entry), ("Stop", latest.stop), ("Target", latest.target)])
-            + '</div>', unsafe_allow_html=True)
+                    width="stretch", config={"displaylogo": False, "scrollZoom": True,
+                                              "displayModeBar": True,
+                                              "modeBarButtonsToAdd": ["drawline", "drawrect", "drawopenpath", "eraseshape"],
+                                              "modeBarButtonsToRemove": ["select2d", "lasso2d"],
+                                              "toImageButtonOptions": {"filename": "maxtrade_chart", "scale": 2}},
+                    key="candle_chart")
+    export = pd.DataFrame(display_candles)
+    export["time"] = pd.to_datetime(export["time"], unit="ms", utc=True)
+    st.download_button("Candle CSV", export.to_csv(index=False), file_name="maxtrade_candles.csv",
+                        mime="text/csv", icon=":material/download:", key="chart_csv")
     if product == "Options":
         render_option_chain(pair, 'chart')
         st.subheader("Contract watchlist")
@@ -138,7 +155,7 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool) ->
     else:
         render_replay(snapshot, interval, product)
     with st.expander("Research rules"):
-        st.write("Markers show new EMA20/EMA50 and RSI14 setups, computed only after each candle closes. Historical markers are not fills, exits, or a backtest. Entry is the candle close; stop/target are 1.5/3 ATR for spot/futures only. Fees, funding and slippage are not modeled.")
+        st.write("Chart indicators use completed candles. Signal markers and trade-level overlays are disabled. Drawings are temporary browser annotations, not orders or saved trading instructions.")
         if product == "Spot":
             st.caption("Spot is buy-only research. Sell/short setups are available on Futures; no position-aware exit rule exists.")
         st.caption("Price display uses 10-second REST polling, not a tick-by-tick WebSocket stream. Signals use completed candles only; the forming candle never changes a confirmed signal. No automated orders.")

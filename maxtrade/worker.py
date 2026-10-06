@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import logging
 import sqlite3
+import tomllib
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
@@ -127,20 +129,52 @@ def run_once(path: Path, symbols: list[str], ai_config: AzureOpenAIConfig | None
     return errors
 
 
+def worker_configuration(path: Path | None, required: bool) -> tuple[AzureOpenAIConfig | None, TelegramConfig | None]:
+    secrets = {}
+    if path is not None:
+        try:
+            if path.stat().st_mode & 0o077:
+                raise ValueError("Worker secrets file must have owner-only permissions (chmod 600)")
+            with path.open("rb") as source:
+                secrets = tomllib.load(source)
+        except (OSError, tomllib.TOMLDecodeError):
+            raise ValueError("Worker private configuration missing or invalid") from None
+    azure = azure_openai_config(secrets=secrets)
+    telegram = telegram_config(secrets=secrets)
+    if required and (azure is None or telegram is None):
+        raise ValueError("Worker waiting for private Azure and Telegram configuration")
+    return azure, telegram
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Bounded public-data research and paper reconciliation; no real orders")
     parser.add_argument("--database", type=Path, default=DEFAULT_PATH)
     parser.add_argument("--symbols", nargs="+", default=["B-BTC_USDT", "B-ETH_USDT"])
     parser.add_argument("--watch", action="store_true")
+    parser.add_argument("--secrets-file", type=Path)
+    parser.add_argument("--require-integrations", action="store_true")
     arguments = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
+    arguments.database = arguments.database.expanduser().resolve()
+    arguments.database.parent.mkdir(parents=True, exist_ok=True)
+    lock = arguments.database.with_suffix(".worker.lock").open("a")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        raise SystemExit("Another worker already owns this database") from None
     if not arguments.watch:
-        raise SystemExit(1 if run_once(arguments.database, arguments.symbols) else 0)
+        azure, telegram = worker_configuration(arguments.secrets_file, arguments.require_integrations)
+        raise SystemExit(1 if run_once(arguments.database, arguments.symbols, azure, telegram) else 0)
     try:
         while True:
             try:
-                failures = run_once(arguments.database, arguments.symbols, continuous=True)
+                azure, telegram = worker_configuration(arguments.secrets_file, arguments.require_integrations)
+                if arguments.require_integrations:
+                    PaperLedger(arguments.database).set_ai_mode('Azure-assisted')
+                failures = run_once(arguments.database, arguments.symbols, azure, telegram, continuous=True)
                 logging.info("Worker cycle completed: failures=%s", failures)
+            except ValueError as error:
+                logging.warning("Worker configuration: %s", error)
             except Exception:
                 logging.exception('Worker cycle interrupted; retrying at next scheduled cycle')
             Event().wait(900)

@@ -148,6 +148,11 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(len(snapshot["display_candles"]), 81)
             self.assertEqual(len(snapshot["candles"]), 80)
             self.assertEqual(len(snapshot["analyses"]), 31)
+            self.assertEqual(app.selectbox(key="chart_style").options, ["Candles", "Line", "Area"])
+            self.assertTrue(any(button.key == "chart_csv" for button in app.get("download_button")))
+            app.selectbox(key="chart_style").select("Line").run()
+            app.multiselect(key="chart_indicators").set_value([]).run()
+            self.assertFalse(app.exception)
             self.assertTrue(any("Forming candle" in item.value for item in app.caption))
             calls = client.return_value.spot_candles.call_count
             next(widget for widget in app.toggle if widget.key == "chart_live").set_value(False).run()
