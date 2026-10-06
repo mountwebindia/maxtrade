@@ -21,7 +21,7 @@ st.markdown(
     <style>
     :root { --ink: #172c27; --muted: #697871; --paper: #f4f5ef; --line: #dce2d9; --lime: #c8ef62; }
     .stApp { background: var(--paper); color: var(--ink); }
-    .block-container { padding: 1rem 1.2rem 2rem; max-width: 1050px; }
+    .block-container { padding: 3.5rem 1.2rem 2rem; max-width: 1050px; }
     [data-testid="stVerticalBlock"] { gap: .65rem; }
     header[data-testid="stHeader"] { background: transparent; }
     .eyebrow { color: #57705f; font-size: .72rem; font-weight: 700; letter-spacing: .12em; }
@@ -45,7 +45,7 @@ st.markdown(
         .summary { display: flex; flex-wrap: wrap; gap: .4rem; margin: .25rem 0; }
         .summary span { background: #eaf0df; border-radius: 8px; padding: .4rem .6rem; font-size: .8rem; }
         @media (max-width: 640px) {
-            .block-container { padding: .65rem .7rem 1.5rem; }
+            .block-container { padding: 3.5rem .7rem 1.5rem; }
             .desk-title { font-size: 1.4rem; }
             .signal-grid { grid-template-columns: minmax(0, 1fr); }
             [data-testid="stHorizontalBlock"] { flex-wrap: wrap; gap: .4rem; }
