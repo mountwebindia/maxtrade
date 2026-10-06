@@ -8,6 +8,7 @@ from requests import RequestException
 
 from maxtrade.charts import chart_analysis
 from maxtrade.coindcx import INTERVAL_MS, normalize_candles
+from maxtrade.research_sources import fetch_derivatives, fetch_news
 
 
 def sentiment_evidence(payload: dict[str, Any], now: datetime) -> dict[str, Any]:
@@ -118,6 +119,27 @@ def run_market_research(client: Any, product: str, symbol: str,
             "reason": "Technical evidence only; coordinated research and independent risk approval are incomplete."}
 
 
+def run_coordinated_research(client: Any, product: str, symbol: str) -> dict[str, Any]:
+    from maxtrade.paper import coordinate
+
+    report = run_market_research(client, product, symbol)
+    report["schema_version"] = 2
+    report["agent"] = "research-coordinator"
+    for name, fetcher in (("sentiment", lambda: fetch_sentiment(client.session)),
+                          ("news", lambda: fetch_news(client.session)),
+                          ("derivatives", lambda: fetch_derivatives(client.session, symbol))):
+        report[name] = None
+        try:
+            report[name] = fetcher()
+            report["expires_at"] = min(report["expires_at"], report[name]["expires_at"])
+        except (RequestException, KeyError, IndexError, TypeError, ValueError, OverflowError) as error:
+            report[f"{name}_error"] = str(error)
+    risk = coordinate(report, datetime.now(timezone.utc))
+    report.update(risk=risk, blockers=risk["blockers"], decision=risk["decision"],
+                  reason="Evidence-backed research; manual event review and paper account risk approval required.")
+    return report
+
+
 def render_market_research(product: str, symbol: str) -> None:
     import json
     import sqlite3
@@ -127,21 +149,15 @@ def render_market_research(product: str, symbol: str) -> None:
     from maxtrade.coindcx import CoinDCXClient
     from maxtrade.history import ScanHistory
     from maxtrade.options import DeribitClient
+    from maxtrade.paper import PaperLedger, coordinate
 
-    with st.expander("Market research"):
+    with st.expander("Market research", icon=":material/radar:"):
         if st.button("Run market research", icon=":material/radar:", key="research_run", width="stretch"):
             st.session_state.pop("research_report", None)
             client = DeribitClient() if product == "Options" else CoinDCXClient()
             try:
                 with st.spinner("Checking 1h and 4h evidence..."):
-                    report = run_market_research(client, product, symbol)
-                    report["sentiment"] = None
-                    try:
-                        report["sentiment"] = fetch_sentiment(client.session)
-                        report["expires_at"] = min(report["expires_at"], report["sentiment"]["expires_at"])
-                        report["blockers"].remove("Fear/greed research not connected")
-                    except (RequestException, KeyError, IndexError, TypeError, ValueError, OverflowError) as error:
-                        report["sentiment_error"] = str(error)
+                    report = run_coordinated_research(client, product, symbol)
                 st.session_state["research_report"] = report
                 try:
                     ScanHistory().save_research(report)
@@ -171,11 +187,78 @@ def render_market_research(product: str, symbol: str) -> None:
                 st.markdown("Source: [Alternative.me](https://alternative.me/crypto/fear-and-greed-index/)")
             elif report.get("sentiment_error"):
                 st.warning(f"Sentiment unavailable: {report['sentiment_error']}")
-            st.write("Pending checks")
-            for blocker in report["blockers"]:
+            news = report.get("news")
+            if news:
+                st.write("News · CoinDesk")
+                st.caption(news["scope"])
+                for item in news["items"][:8]:
+                    st.link_button(item["title"], item["url"], icon=":material/open_in_new:")
+                    st.caption(item["event_time"])
+            elif report.get("news_error"):
+                st.warning(f"News unavailable: {report['news_error']}")
+            derivatives = report.get("derivatives")
+            if derivatives:
+                st.write(f"Derivatives · {derivatives['instrument']}")
+                st.dataframe([derivatives["values"]], hide_index=True, width="stretch")
+                st.caption(derivatives["scope"])
+                st.caption(f"OI: {derivatives['open_interest_unit']} · funding: {derivatives['funding_unit']}")
+            elif report.get("derivatives_error"):
+                st.warning(f"Derivatives unavailable: {report['derivatives_error']}")
+            st.write("Paper risk review")
+            reviewed = st.checkbox("News and event risks reviewed", value=False, key=f"review_{report['created_at']}")
+            try:
+                ledger = PaperLedger()
+                now = datetime.now(timezone.utc)
+                risk = coordinate(report, now, reviewed, ledger.account(now))
+                st.write(f"Paper decision: {risk['decision']}")
+                if st.button("Queue paper entry", icon=":material/add_chart:", disabled=not risk["approved"], key="paper_submit"):
+                    ledger.submit(report, datetime.now(timezone.utc), reviewed)
+                    st.success("Simulated entry queued; no exchange order sent.")
+            except (OSError, sqlite3.Error, ValueError, KeyError, TypeError) as error:
+                st.warning(f"Paper risk unavailable: {error}")
+                risk = {"blockers": report["blockers"]}
+            for blocker in risk["blockers"]:
                 st.write(f"- {blocker}")
             st.download_button("Research JSON", data=json.dumps(report, indent=2, allow_nan=False),
                                file_name="maxtrade_research.json", mime="application/json",
                                icon=":material/download:", key="research_download")
         else:
             st.caption("No matching research report.")
+
+
+def render_paper_account() -> None:
+    import sqlite3
+    import streamlit as st
+    from maxtrade.paper import PaperLedger
+
+    st.markdown("#### Paper account")
+    try:
+        ledger = PaperLedger()
+        account = ledger.account(datetime.now(timezone.utc))
+        with st.form("paper_settings"):
+            capital = st.number_input("Paper capital (USDT)", min_value=100.0, max_value=1_000_000.0,
+                                      value=float(account["capital"]), disabled=bool(ledger.positions()))
+            kill = st.checkbox("Paper kill switch", value=bool(account["kill_switch"]))
+            if st.form_submit_button("Save paper limits", icon=":material/save:"):
+                ledger.settings(capital, kill)
+                account = ledger.account(datetime.now(timezone.utc))
+                st.success("Paper limits saved.")
+        st.caption("USDT spot only · 1% risk · 25% allocation cap · 3% realized daily-loss veto · 10 bps fees per side · 5 bps slippage per side")
+        st.metric("Realized paper equity (USDT)", f"{account['equity']:,.2f}")
+        positions = ledger.positions()
+        if positions:
+            columns = ("id", "symbol", "state", "submitted_at", "entry", "exit", "quantity", "pnl", "reason")
+            st.dataframe([{key: row[key] for key in columns} for row in positions], hide_index=True, width="stretch")
+        if st.button("Reconcile paper positions", icon=":material/sync:"):
+            from maxtrade.coindcx import CoinDCXClient
+
+            client = CoinDCXClient()
+            try:
+                for symbol in {row["symbol"] for row in positions if row["state"] in {"PENDING", "OPEN"}}:
+                    ledger.reconcile(symbol, client.spot_candles(symbol, "1h"), datetime.now(timezone.utc))
+                st.rerun()
+            finally:
+                client.session.close()
+        st.caption("Snapshot simulation only: fresh reviewed evidence at submission, immediately next hourly open, no fresh recommendation at fill. Completed 1h bars reconstruct fills. Kill switch cancels pending entries, not open positions. Equity excludes unrealized P&L. Local/cloud SQLite needs durable storage and backups.")
+    except (OSError, sqlite3.Error, ValueError, RequestException) as error:
+        st.warning(f"Paper account unavailable: {error}")

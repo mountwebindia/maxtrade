@@ -34,6 +34,8 @@ class DashboardTests(unittest.TestCase):
                 patch("maxtrade.coindcx.CoinDCXClient"), \
                 patch("maxtrade.research.run_market_research", return_value=report), \
                 patch("maxtrade.research.fetch_sentiment", side_effect=ValueError("stale sentiment")), \
+                patch("maxtrade.research.fetch_news", side_effect=ValueError("news unavailable")), \
+                patch("maxtrade.research.fetch_derivatives", side_effect=ValueError("derivatives unavailable")), \
                 patch("maxtrade.history.ScanHistory") as history:
             chart_client.return_value.spot_candles.return_value = candles
             app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=20)

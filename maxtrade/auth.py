@@ -61,7 +61,6 @@ def require_login() -> None:
         config = login_config(st.secrets)
     except (FileNotFoundError, ValueError):
         clear_session()
-        st.title("MaxTrade")
         st.error("Dashboard locked. The owner must configure login credentials in server secrets.")
         st.stop()
     fingerprint = hashlib.sha256(repr(config).encode()).hexdigest()
@@ -74,8 +73,8 @@ def require_login() -> None:
         return
     if session:
         clear_session()
-    st.title("MaxTrade")
     with st.form("login_form"):
+        st.subheader("Sign in")
         st.text_input("Username", key="login_username", max_chars=128)
         st.text_input("Password", type="password", key="login_password", max_chars=1024)
         submitted = st.form_submit_button("Sign in", icon=":material/login:", type="primary", width="stretch")

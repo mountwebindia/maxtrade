@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from contextlib import closing
 from pathlib import Path
 from typing import Any
 
 
-DEFAULT_PATH = Path(__file__).resolve().parent.parent / "data" / "scan_history.sqlite3"
+DEFAULT_PATH = Path(os.environ.get("MAXTRADE_DATABASE", str(Path(__file__).resolve().parent.parent / "data" / "scan_history.sqlite3"))).expanduser()
 
 
 class ScanHistory:
@@ -34,6 +35,7 @@ class ScanHistory:
                     report_json TEXT NOT NULL
                 )
             """)
+            connection.execute("CREATE TABLE IF NOT EXISTS research_alerts (id INTEGER PRIMARY KEY, fingerprint TEXT UNIQUE NOT NULL, created_at TEXT NOT NULL, symbol TEXT NOT NULL, message TEXT NOT NULL)")
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=10)
@@ -84,3 +86,12 @@ class ScanHistory:
             rows = connection.execute("SELECT id, report_json FROM research_reports ORDER BY id DESC LIMIT ?",
                                       (limit,)).fetchall()
         return [{"id": row["id"], "report": json.loads(row["report_json"])} for row in rows]
+
+    def save_alert(self, fingerprint: str, created_at: str, symbol: str, message: str) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute("INSERT OR IGNORE INTO research_alerts (fingerprint,created_at,symbol,message) VALUES (?,?,?,?)",
+                               (fingerprint, created_at, symbol, message))
+
+    def recent_alerts(self, limit: int = 50) -> list[dict[str, Any]]:
+        with closing(self._connect()) as connection:
+            return [dict(row) for row in connection.execute("SELECT created_at,symbol,message FROM research_alerts ORDER BY id DESC LIMIT ?", (limit,))]

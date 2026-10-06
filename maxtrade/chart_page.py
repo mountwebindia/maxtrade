@@ -144,7 +144,7 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool) ->
 
 
 def render_replay(snapshot: dict, interval: str, product: str) -> None:
-    with st.expander("Backtest"):
+    with st.expander("Backtest", icon=":material/science:"):
         st.caption(f"Historical simulation · {len(snapshot['candles'])} candles · capital and PnL in market quote currency")
         columns = st.columns(2)
         cash = columns[0].number_input("Starting capital", min_value=100.0, value=10000.0, step=100.0, key="replay_cash")

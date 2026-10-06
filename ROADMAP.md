@@ -12,10 +12,17 @@
 - Owner login with salted password hashes, sign-out and one-hour sessions; server secrets must be configured. Session-local cooldown does not replace identity-proxy or private-hosting access controls.
 - Alternative.me fear/greed evidence now accompanies manual reports, with attribution and range/timestamp/category checks. Bitcoin-focused context only, not a trade signal. News providers remain the next integration.
 
+## Newly implemented
+- Compact icon-based shell and mobile bottom navigation, with owner login retained.
+- Bounded CoinDesk RSS headline evidence and Deribit BTC/ETH perpetual funding/OI/spread adapters; timestamps, units, limitations and provider failures disclosed.
+- Deterministic paper-only coordinator with stale/missing/conflicting evidence vetoes, human event review and independent account risk checks.
+- Transactional BTC/ETH USDT spot paper ledger: next-bar snapshot simulation, cost-aware sizing, stop-first exits, duplicate prevention and default-on kill switch.
+- One-shot research/reconciliation worker, 15-minute slot deduplication, saved internal alerts and archive viewer. External scheduling is opt-in and not activated on Streamlit Cloud.
+
 ## Next: strategy evaluation
 1. **Extended evaluation:** verify longer historical data availability, historical funding and market constraints; add out-of-sample and walk-forward evaluation. Report sample size, drawdown and costs. Current loaded-chart replay is too short to establish reliability.
-2. **Paper-trade ledger:** explicit simulated fills, position lifecycle, restart-safe storage, duplicate-entry prevention, and conservative exit rules. Never present archived signals as actual fills.
-3. **Risk controls:** user-set paper capital, per-trade risk, exposure caps, minimum liquidity checks, daily-loss limits, and kill switch. Distinguish quote units before summing exposure.
+2. **Paper evaluation:** accumulate forward paper results and evaluate fixtures, missing-data recovery, gaps and risk limits. Add verified exchange lot constraints and execution-liquidity checks before expanding beyond the current spot simulation.
+3. **Risk expansion:** unrealized P&L, portfolio/multi-currency exposure and position-aware emergency exits. Current caps use realized equity and one spot position; this is not live-account risk management.
 
 ## Operational improvements
 4. Rate-limit-aware retries, bounded concurrency/caching, scan duration/progress, and stable dependency locking.
@@ -33,7 +40,7 @@ Build this as a scheduled backend with durable evidence and decision storage, no
 6. **Decision coordinator:** combine the evidence into BUY/LONG, SELL/SHORT, CALL/PUT research bias, or NO TRADE, with reasons, contradictions, expiry time and risk status. Spot remains buy-only; CALL/PUT bias is not an executable contract order. Missing or conflicting evidence can mean NO TRADE; scores must not be presented as calibrated probabilities without validation.
 7. **Paper execution and audit:** restart-safe simulated positions, cost-aware fills, deduplicated decisions, evidence snapshots and human review. Evaluate each agent and the combined policy against fixed fixtures and historical outcomes before any execution integration.
 
-Sequence: the initial evidence schema and manual market agent are implemented. Next verify news and fear/greed providers and build their evidence adapters, then derivatives research, independent risk/coordination, and paper validation. Scheduled jobs and production durable storage are not implemented yet; they need bounded concurrency, backoff, provider quotas, monitoring and secret isolation. A later chart phase can use a documented exchange WebSocket and a dedicated candlestick component for tick-level updates; the current chart is explicitly polling.
+Implementation status: the initial technical, sentiment, headline and derivatives adapters, paper-only risk/coordinator and ledger are implemented. The one-shot worker and internal alerts are available; production scheduling, durable hosting, external alert delivery, backups and monitoring still require infrastructure configuration. Broader macro coverage, provider licensing review, historical evaluation and execution-grade liquidity are not complete. The agent descriptions above remain target acceptance criteria, not a claim of full autonomous coverage. A later chart phase can use a documented exchange WebSocket; the current chart is explicitly polling.
 
 ## Separate, gated phases
 - **Options execution/evaluation:** require actual contract premium history and verified execution support. Deribit underlying charts cannot establish option returns; CoinDCX options execution is not integrated.
