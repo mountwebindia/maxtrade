@@ -11,6 +11,8 @@ from maxtrade.coindcx import CoinDCXClient, INTERVAL_MS, normalize_candles
 from maxtrade.options import DeribitClient, scan_options
 from maxtrade.presentation import display_number, signal_card
 from maxtrade.scanner import QUOTE_CURRENCIES
+from maxtrade.research import render_market_research
+from maxtrade.auth import require_chart_login
 
 
 def render_chart_page() -> None:
@@ -48,11 +50,13 @@ def render_chart_page() -> None:
                           key=f"chart_market_{product}")
         pair = catalog[market]
         st.caption(f"CoinDCX · {product.lower()} · {market}")
+    render_market_research(product, pair)
     live = st.toggle("Live updates · 10s", value=True, key="chart_live")
     st.fragment(run_every="10s" if live else None)(render_chart_snapshot)(product, interval, pair, live)
 
 
 def render_chart_snapshot(product: str, interval: str, pair: str, live: bool) -> None:
+    require_chart_login()
     selection = (product, interval, pair)
     refresh = st.button("Refresh chart", type="primary", icon=":material/refresh:", width="stretch", key="chart_refresh")
     previous = st.session_state.get("chart_snapshot")

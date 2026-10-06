@@ -8,6 +8,18 @@ GitHub stores the source; it does not run this Python web app. GitHub Pages cann
 
 Never commit `.streamlit/secrets.toml`, `.env`, API credentials, or `data/`. The example secrets file intentionally contains empty values.
 
+## Dashboard login
+
+The dashboard now fails closed: without a valid username and password hash it displays a locked screen, not charts, scans, history or downloads. Configure these on the server, never in GitHub or chat.
+
+1. Run `.venv/bin/python scripts/create_login_hash.py` in your own terminal. Enter a unique password of at least 16 characters at the hidden prompts. The output is a salted PBKDF2-SHA256 hash, not your password.
+2. In Streamlit Community Cloud, open the app's **Manage app > Settings > Secrets**. Add `MAXTRADE_USERNAME = "your-chosen-username"` and the generated `MAXTRADE_PASSWORD_HASH` line. For local development use the ignored `.streamlit/secrets.toml` file instead.
+3. Save secrets, restart the app if required, and sign in. Test incorrect credentials and sign-out in a separate browser session. No default username/password exists.
+
+Sessions last one hour and are browser-session-only; reloads may require login. Sign-out clears session snapshots. Credential rotation invalidates existing sessions on their next request/poll. Chart polling checks access before fetching data. Five failed attempts impose a one-minute **session-local** cooldown; a new browser session can bypass it. This shared owner login is not a multi-user identity system, and the cooldown is not an internet-wide brute-force defense. Prefer private-app access restrictions or a rate-limited identity proxy before exposing account data; authenticated exchange access stays disabled. Previously downloaded data cannot be revoked. SQLite history is still shared among authenticated users of this account.
+
+Publishing before setting these secrets deliberately locks the app. Password hashing does not configure the live secrets automatically; only the app owner can finish that step privately.
+
 ## Current Hostinger shared hosting
 
 This app requires a persistent Python process and WebSocket support. Ordinary shared/WordPress hosting is not an appropriate runtime for Streamlit. Confirm specific capabilities with Hostinger before assuming otherwise. Uploading the repository into `public_html` will not run it.

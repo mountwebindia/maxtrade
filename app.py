@@ -13,9 +13,11 @@ from maxtrade.options import DeribitClient, scan_options
 from maxtrade.presentation import signal_card
 from maxtrade.scanner import scan_futures, scan_spot
 from maxtrade.settings import credential_status
+from maxtrade.auth import require_login
 
 
 st.set_page_config(page_title="MaxTrade | Signal Desk", page_icon="M", layout="wide")
+require_login()
 st.markdown(
     """
     <style>

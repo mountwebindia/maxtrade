@@ -9,6 +9,43 @@ from maxtrade.settings import credential_status
 
 
 class DashboardTests(unittest.TestCase):
+    def setUp(self):
+        login = patch("maxtrade.auth.require_login")
+        login.start()
+        self.addCleanup(login.stop)
+        chart_login = patch("maxtrade.chart_page.require_chart_login")
+        chart_login.start()
+        self.addCleanup(chart_login.stop)
+
+    def test_market_research_run_saves_report_and_keeps_trade_gate_closed(self):
+        from maxtrade.research import run_market_research
+        from unittest.mock import Mock
+        from datetime import datetime, timezone
+        from time import time
+
+        now = datetime.now(timezone.utc)
+        end = int(time() * 1000) // 3600000 * 3600000
+        candles = [{"time": end - (80 - index) * 3600000, "open": 100,
+                    "high": 101, "low": 99, "close": 100} for index in range(80)]
+        source = Mock()
+        source.spot_candles.side_effect = [candles, ValueError("4h unavailable")]
+        report = run_market_research(source, "Spot", "B-BTC_USDT", now)
+        with patch("maxtrade.chart_page.CoinDCXClient") as chart_client, \
+                patch("maxtrade.coindcx.CoinDCXClient"), \
+                patch("maxtrade.research.run_market_research", return_value=report), \
+                patch("maxtrade.research.fetch_sentiment", side_effect=ValueError("stale sentiment")), \
+                patch("maxtrade.history.ScanHistory") as history:
+            chart_client.return_value.spot_candles.return_value = candles
+            app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=20)
+            app.session_state["navigation"] = "Chart"
+            app.run()
+            next(button for button in app.button if button.key == "research_run").click().run()
+            self.assertFalse(app.exception)
+            self.assertEqual(app.session_state["research_report"]["decision"], "NO TRADE")
+            history.return_value.save_research.assert_called_once_with(report)
+            self.assertTrue(any("4h unavailable" in item.value for item in app.warning))
+            self.assertTrue(any("Coordinated decision: NO TRADE" in item.value for item in app.markdown))
+
     def test_live_chart_closed_signals_pause_and_hidden_tab(self):
         from time import time
         end = int(time() * 1000) // 3600000 * 3600000

@@ -27,6 +27,13 @@ class ScanHistory:
                     results_json TEXT NOT NULL
                 )
             """)
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS research_reports (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    report_json TEXT NOT NULL
+                )
+            """)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=10)
@@ -64,3 +71,16 @@ class ScanHistory:
         snapshot = dict(row)
         snapshot["results"] = json.loads(snapshot.pop("results_json"))
         return snapshot
+
+    def save_research(self, report: dict[str, Any]) -> int:
+        payload = json.dumps(report, allow_nan=False)
+        with closing(self._connect()) as connection, connection:
+            cursor = connection.execute("INSERT INTO research_reports (created_at, report_json) VALUES (?, ?)",
+                                        (report["created_at"], payload))
+            return int(cursor.lastrowid)
+
+    def recent_research(self, limit: int = 20) -> list[dict[str, Any]]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute("SELECT id, report_json FROM research_reports ORDER BY id DESC LIMIT ?",
+                                      (limit,)).fetchall()
+        return [{"id": row["id"], "report": json.loads(row["report_json"])} for row in rows]

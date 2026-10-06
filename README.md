@@ -43,6 +43,16 @@ Options charts show the USD perpetual underlying, not coin-denominated option pr
 
 ## Saved history
 
+## Market research agent
+
+Open **Chart > Market research > Run market research** for an on-demand 1h/4h technical evidence report. It records venue, symbol, quote units, source endpoint, candle-close time, retrieval time and expiry. Forming, stale or gapped candles cannot produce valid evidence. Aligned directions are technical bias only; the coordinated decision stays NO TRADE until news, sentiment, derivatives/liquidity, portfolio risk and paper-validation gates exist. Options reports describe USD underlying direction, never option-premium entry or risk levels.
+
+Reports are saved separately from scans in the local SQLite database and downloadable as JSON. They are not orders or fills. Reports can expire, and stored technical bias is historical rather than a refreshed recommendation. Manual runs also fetch the Bitcoin-focused [Alternative.me fear/greed index](https://alternative.me/crypto/fear-and-greed-index/), rejecting future/stale timestamps, invalid classifications and values outside 0–100. Its 24-hour freshness limit and scope are explicit; it does not generate trade signals. Provider failures retain the sentiment blocker. No background scheduler, news adapter, independent risk engine or multi-agent decision system is enabled yet. Cloud-local SQLite remains shared and non-durable; a production scheduler needs separately provisioned durable storage.
+
+Dashboard access requires server-configured username and hashed password. No default credentials exist. See [DEPLOYMENT.md](DEPLOYMENT.md) for private setup, session limitations and hosted access precautions.
+
+## Saved scans
+
 Each completed scan is saved locally in `data/scan_history.sqlite3`, including DATA ERROR rows. Open **History** to inspect and export previous snapshots after a restart. The viewer lists the latest 50; older records remain in the database. This directory is Git-ignored. Back up the file to preserve history. Storage failures do not hide current results. Archived signals are not paper fills or realized performance.
 
 ## Verification
