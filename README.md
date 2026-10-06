@@ -2,7 +2,7 @@
 
 For GitHub publishing, live-link hosting, and Hostinger shared-hosting limitations, see [DEPLOYMENT.md](DEPLOYMENT.md).
 
-CoinDCX research dashboard for explainable spot and futures paper signals. The first version uses public market data only and never places orders.
+Research dashboard for CoinDCX spot/futures signals and Deribit BTC/ETH options watchlists. Uses public market data only and never places orders.
 
 ## Run locally
 
@@ -45,6 +45,14 @@ Public API references: [CoinDCX documentation](https://docs.coindcx.com/). Spot 
 
 The research signal uses 20/50 EMA ordering and Wilder-smoothed RSI(14) for trend and momentum alignment. Candidate risk levels use the simple mean of the last 14 true ranges (ATR): 1.5 ATR for the stop and 3 ATR for the target. Spot signals do not recommend shorting. These rules are a baseline for testing, not a validated or profitable strategy. Fees, slippage, funding, and portfolio sizing are not modeled.
 
-Options remain disabled until a supported CoinDCX options feed is verified. Order placement, API keys, and account access are not part of this version. Backtesting and paper-trading records should be added before considering any execution integration.
+## Crypto options research
+
+Select **Options**, then BTC or ETH, and scan. The source is **Deribit**, not CoinDCX. Public `get_instruments`, `get_book_summary_by_currency`, `ticker`, and `get_tradingview_chart_data` endpoints require no keys. See [Deribit API documentation](https://docs.deribit.com/).
+
+Open coin-quoted contracts with 7–45 days until expiry are ranked by reported USD volume; at most 30 are inspected. The selected interval applies to the underlying Deribit perpetual trend, not option-premium candles. Four-hour bars are aggregated from completed hourly bars. `WATCH CALL` or `WATCH PUT` requires aligned underlying EMA/RSI direction, absolute delta 0.25–0.75, a two-sided spread at most 10%, open interest at least 10 base coins, and positive 24-hour base-coin volume. Quotes older than five minutes, invalid Greeks, missing/crossed quotes, and closed books produce DATA ERROR, not candidates.
+
+Cards and CSV include contract expiry, USD strike, coin-denominated premium/bid/ask, IV, delta, spread, and open interest. CSV also includes exchange gamma/theta/vega and quote timestamps. IV and Greeks are exchange estimates, not independently modeled. No option entry/stop/target is invented from underlying ATR. Watchlists are unbacktested research filters, not fair-value assessments or execution instructions. Options can lose their entire premium; liquidity filters do not guarantee fills. Fees, slippage and portfolio risk are not modeled.
+
+CoinDCX options execution, all other order placement, and authenticated account access remain disabled. Backtesting and paper-trading records should be added before considering any execution integration. Cloud-local history is shared across users and may disappear on restart or redeployment; it is not durable private storage.
 
 See [ROADMAP.md](ROADMAP.md) for remaining phases and acceptance criteria.

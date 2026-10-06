@@ -9,6 +9,7 @@ import streamlit as st
 
 from maxtrade.coindcx import CoinDCXClient
 from maxtrade.history import ScanHistory
+from maxtrade.options import DeribitClient, scan_options
 from maxtrade.presentation import signal_card
 from maxtrade.scanner import scan_futures, scan_spot
 from maxtrade.settings import credential_status
@@ -54,7 +55,7 @@ st.markdown(
     </style>
     <div class="eyebrow">MAXTRADE / RESEARCH MODE</div>
     <div class="desk-title">MaxTrade Signal Desk</div>
-    <div class="desk-subtitle">CoinDCX market scan · rule-based technical signals · paper mode only</div>
+    <div class="desk-subtitle">CoinDCX spot/futures · Deribit options · research only</div>
     """,
     unsafe_allow_html=True,
 )
@@ -64,8 +65,12 @@ product = controls[0].selectbox("Market type", ["Spot", "Futures", "Options"])
 interval = controls[1].selectbox("Candle interval", ["1h", "4h"])
 limit = controls[2].select_slider("Markets to inspect", options=[5, 10, 15, 20, 25, 30], value=10)
 
-st.caption(f"Selected: {product} · {interval} · up to {limit} markets. Scans run on demand, not automatically.")
-scan = st.button("Scan markets now", type="primary", disabled=product == "Options", width="stretch")
+currency = st.selectbox("Options underlying", ["BTC", "ETH"]) if product == "Options" else None
+if product == "Options":
+    st.caption(f"Deribit · {currency} options · 7–45 days to expiry · {interval} underlying trend · premiums in {currency}")
+else:
+    st.caption(f"Selected: {product} · {interval} · up to {limit} markets. Scans run on demand, not automatically.")
+scan = st.button("Scan markets now", type="primary", width="stretch")
 signals_tab, history_tab, api_tab = st.tabs(["Signals", "History", "API setup"])
 
 def show_signals(rows: list[dict], key: str) -> None:
@@ -77,29 +82,26 @@ def show_signals(rows: list[dict], key: str) -> None:
 
 with signals_tab:
 
- if product == "Options":
-    st.info(
-        "Options signals are not enabled yet. This workspace has no verified CoinDCX options "
-        "instrument or market-data feed, so it will not invent option prices or Greeks."
-    )
-    st.markdown("**Needed to enable options:** listed contracts, expiry, strike, open interest, and implied volatility data.")
- elif scan:
-    with st.spinner(f"Scanning {product.lower()} markets on CoinDCX…"):
+ if scan:
+     source = "Deribit" if product == "Options" else "CoinDCX"
+     with st.spinner(f"Scanning {product.lower()} markets on {source}…"):
         progress_bar = st.progress(0, text="Discovering active markets and loading tickers…")
         def report_progress(done: int, total: int, market: str) -> None:
             progress_bar.progress(done / total, text=f"Checked {done}/{total}: {market}")
 
-        client = CoinDCXClient()
+        client = DeribitClient() if product == "Options" else CoinDCXClient()
         try:
-            results = (
-                scan_spot(client, interval, limit, progress=report_progress)
-                if product == "Spot"
-                else scan_futures(client, interval, limit, progress=report_progress)
-            )
+            if product == "Options":
+                results = scan_options(client, currency, interval, limit, progress=report_progress)
+            elif product == "Spot":
+                results = scan_spot(client, interval, limit, progress=report_progress)
+            else:
+                results = scan_futures(client, interval, limit, progress=report_progress)
             st.session_state["scan_results"] = results
             st.session_state["scan_product"] = product
             st.session_state["scan_interval"] = interval
             st.session_state["scan_limit"] = limit
+            st.session_state["scan_currency"] = currency
             st.session_state["scan_time"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
             try:
                 scan_id = ScanHistory().save(product, interval, limit, st.session_state["scan_time"], results)
@@ -119,6 +121,7 @@ with signals_tab:
         st.session_state.get("scan_product") != product
         or st.session_state.get("scan_interval") != interval
         or st.session_state.get("scan_limit") != limit
+        or st.session_state.get("scan_currency") != currency
     ):
         st.info("Settings changed. Run a scan to load matching signals.")
     else:
@@ -128,12 +131,18 @@ with signals_tab:
         no_trade_count = int(frame["Signal"].eq("NO TRADE").sum())
         error_count = int(frame["Signal"].eq("DATA ERROR").sum())
         st.markdown(f'<div class="summary"><span>{len(frame)} markets</span><span>{long_count} long</span><span>{short_count} short</span><span>{no_trade_count} no trade</span><span>{error_count} errors</span></div>', unsafe_allow_html=True)
+        if product == "Options":
+            watch_count = int(frame["Signal"].isin(["WATCH CALL", "WATCH PUT"]).sum())
+            st.caption(f"{watch_count} options research candidates · Deribit source · no CoinDCX options execution")
         st.caption(f"Snapshot completed: {st.session_state['scan_time']} (UTC). Not auto-refreshing.")
         if error_count:
             st.warning("Some markets have unavailable or invalid data. Those rows contain no trade signal.")
         show_signals(results, "live")
         with st.expander("Signal assumptions"):
-            st.caption("Price: spot last / futures mark. Entry: completed candle close. Stop/target: 1.5× / 3× ATR. Raw volumes are not comparable across quotes. Fees, funding and slippage are not modeled. Signals are not execution instructions.")
+            if product == "Options":
+                st.caption("WATCH CALL/PUT: Deribit perpetual EMA/RSI trend aligned with option direction, 7–45 days to expiry, absolute delta 0.25–0.75, spread ≤10%, open interest ≥10 base coins and positive 24h volume. Premiums/bid/ask are in BTC or ETH; strikes are USD. IV and Greeks are exchange estimates. No option fair-value model, premium stop/target, fees or backtest. A candidate is not a recommendation; options can lose their full premium.")
+            else:
+                st.caption("Price: spot last / futures mark. Entry: completed candle close. Stop/target: 1.5× / 3× ATR. Raw volumes are not comparable across quotes. Fees, funding and slippage are not modeled. Signals are not execution instructions.")
         st.download_button(
             "Download scan CSV",
             data=frame.assign(Product=product, Interval=interval, ScannedAtUTC=st.session_state["scan_time"]).to_csv(index=False).encode("utf-8"),
@@ -142,7 +151,7 @@ with signals_tab:
         )
  else:
     st.markdown("#### Awaiting scan")
-    st.write("Choose a market type and run a scan to load current CoinDCX research signals.")
+    st.write("Choose a market type and run a scan to load current research results.")
 
 with history_tab:
     st.caption("Local snapshots—not executed trades or performance records. Latest 50 scans shown.")
@@ -175,7 +184,7 @@ with api_tab:
     st.info(credential_status(secrets=local_secrets))
     st.caption("Configuration only. Credentials are not sent to CoinDCX; authentication and order execution are disabled.")
     st.markdown("Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` and edit the copy locally. Alternatively set `COINDCX_API_KEY` and `COINDCX_API_SECRET` in the server environment. Restart the app afterward.")
-    st.warning("Never paste keys into chat or commit the secrets file. Use the minimum exchange permissions available; do not grant withdrawal permissions. Keep this app local until remote access is secured.")
-    st.caption("This is a responsive web dashboard, not a native mobile app. The current localhost URL works only on this computer; phone access requires secure hosting or a separately configured trusted-network setup.")
+    st.warning("Never paste keys into chat or commit the secrets file. Use the minimum exchange permissions available; do not grant withdrawal permissions. Do not add exchange keys to a public deployment until authentication and access controls are in place.")
+    st.caption("This is a responsive web dashboard, not a native mobile app. Hosted links can be opened on a phone. Local scan history on cloud hosting may be lost when the app restarts or is redeployed, and is shared across app users.")
 
 st.caption("Research only · No orders · Public market scans")
