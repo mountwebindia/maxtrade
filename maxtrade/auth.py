@@ -67,9 +67,6 @@ def require_login() -> None:
     now = time.time()
     session = st.session_state.get("authenticated_session")
     if session_valid(config):
-        if st.button("Sign out", icon=":material/logout:", key="auth_logout"):
-            clear_session()
-            st.rerun()
         return
     if session:
         clear_session()

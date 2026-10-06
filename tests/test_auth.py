@@ -46,10 +46,12 @@ class AuthTests(unittest.TestCase):
             app.button[0].click().run()
             self.assertFalse(app.exception)
             self.assertEqual(len(app.tabs), 4)
+            self.assertEqual(app.sidebar.button(key="auth_logout").label, "Sign out")
             self.assertNotIn("login_password", app.session_state)
             app.session_state["research_report"] = {"private": "snapshot"}
             app.button(key="auth_logout").click().run()
             self.assertEqual(len(app.tabs), 0)
+            self.assertEqual(len(app.sidebar.button), 0)
             self.assertNotIn("research_report", app.session_state)
             app.text_input(key="login_username").set_value("test-user")
             app.text_input(key="login_password").set_value(self.password)

@@ -17,6 +17,17 @@ class DashboardTests(unittest.TestCase):
         chart_login.start()
         self.addCleanup(chart_login.stop)
 
+    def test_sidebar_navigation_tracks_tabs(self):
+        app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=20).run()
+        self.assertEqual([button.label for button in app.sidebar.button],
+                         ["Signals", "Chart", "History", "Settings", "Sign out"])
+        app.sidebar.button(key="menu_settings").click().run()
+        self.assertFalse(app.exception)
+        self.assertEqual(app.session_state["navigation"], "Settings")
+        app.sidebar.button(key="menu_signals").click().run()
+        self.assertFalse(app.exception)
+        self.assertEqual(app.session_state["navigation"], "Signals")
+
     def test_market_research_run_saves_report_and_keeps_trade_gate_closed(self):
         from maxtrade.research import run_market_research
         from unittest.mock import Mock

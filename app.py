@@ -13,7 +13,7 @@ from maxtrade.options import DeribitClient, scan_options
 from maxtrade.presentation import signal_card
 from maxtrade.scanner import scan_futures, scan_spot
 from maxtrade.settings import credential_status
-from maxtrade.auth import require_login
+from maxtrade.auth import clear_session, require_login
 
 
 st.set_page_config(page_title="MaxTrade | Signal Desk", page_icon="M", layout="wide")
@@ -30,8 +30,15 @@ st.markdown(
     h3 { font-size: 1.25rem !important; }
     [data-testid="stTextInput"] input { min-height: 44px; }
     [data-testid="stForm"] { max-width: 440px; margin: .5rem auto; border-radius: 8px; background: #fff; padding: 1.25rem; }
-    .st-key-auth_logout { display: flex; justify-content: flex-end; margin-top: -.25rem; }
-    .st-key-auth_logout button { min-height: 36px; font-size: .75rem; }
+    [data-testid="stSidebar"] { background: #fff; border-right: 1px solid var(--line); }
+    [data-testid="stSidebar"] [data-testid="stSidebarContent"] { padding-top: 1rem; }
+    [data-testid="stSidebar"] .desk-header { padding-bottom: 1.2rem; margin-bottom: 1rem; }
+    [data-testid="stSidebar"] .desk-title { font-size: 1.4rem; }
+    [data-testid="stSidebar"] button { justify-content: flex-start; min-height: 48px; border-radius: 6px; }
+    [data-testid="stSidebar"] button[kind="secondary"] { border-color: transparent; background: transparent; }
+    [data-testid="stSidebar"] button[kind="secondary"]:hover { background: #edf4f2; }
+    .st-key-auth_logout { margin-top: 1.5rem; border-top: 1px solid var(--line); padding-top: .75rem; }
+    .st-key-auth_logout button { color: #87362e; }
     [data-testid="stVerticalBlock"] { gap: .65rem; }
     header[data-testid="stHeader"] { background: #f3f6f8; }
     .desk-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .6rem 0 1rem; border-bottom: 1px solid var(--line); }
@@ -114,6 +121,19 @@ st.markdown(
     unsafe_allow_html=True,
 )
 require_login()
+
+def select_page(page: str) -> None:
+    st.session_state["navigation"] = page
+
+with st.sidebar:
+    st.markdown('<div class="desk-header"><div class="desk-brand"><div class="brand-mark" aria-hidden="true"><span class="app-icon">candlestick_chart</span></div><div><div class="desk-title">MaxTrade</div><div class="desk-subtitle">Research desk</div></div></div></div>', unsafe_allow_html=True)
+    for page, icon in [("Signals", "radar"), ("Chart", "candlestick_chart"), ("History", "history"), ("Settings", "tune")]:
+        st.button(page, icon=f":material/{icon}:", key=f"menu_{page.lower()}",
+                  type="primary" if st.session_state.get("navigation", "Signals") == page else "secondary",
+                  width="stretch", on_click=select_page, args=(page,))
+    if st.button("Sign out", icon=":material/logout:", key="auth_logout", width="stretch"):
+        clear_session()
+        st.rerun()
 
 signals_tab, chart_tab, history_tab, api_tab = st.tabs(["Signals", "Chart", "History", "Settings"], key="navigation", on_change="rerun")
 with signals_tab:
