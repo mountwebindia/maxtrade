@@ -8,6 +8,21 @@ from maxtrade.scanner import scan_futures, scan_spot
 
 
 class CandleTests(unittest.TestCase):
+    def test_live_display_retains_forming_candle_but_rejects_future_bars(self):
+        rows = [{"time": index * 3_600_000} for index in range(4)]
+        result = normalize_candles(rows, "1h", now_ms=9_000_000, include_open=True)
+        self.assertEqual([row["time"] for row in result], [0, 3_600_000, 7_200_000])
+        self.assertEqual(len(normalize_candles(rows, "1h", now_ms=9_000_000)), 2)
+
+    def test_forming_four_hour_group_requires_contiguous_hours(self):
+        bars = [{"time": index * 3_600_000, "open": 100, "high": 102, "low": 99,
+                 "close": 101, "volume": 10} for index in range(7)]
+        self.assertEqual(len(aggregate_four_hour_candles(bars)), 1)
+        live = aggregate_four_hour_candles(bars, now_ms=23_400_000)
+        self.assertEqual(len(live), 2)
+        self.assertEqual(live[-1]["volume"], 30)
+        self.assertEqual(len(aggregate_four_hour_candles(bars[:5] + bars[6:], now_ms=23_400_000)), 1)
+
     def test_four_hour_aggregation_requires_complete_hourly_groups(self):
         bars = [{"time": i * 3_600_000, "open": 100 + i, "high": 102 + i, "low": 99 + i, "close": 101 + i, "volume": 10} for i in [0, 1, 2, 3, 4, 6, 7]]
         result = aggregate_four_hour_candles(bars[::-1])

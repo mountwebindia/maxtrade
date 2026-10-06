@@ -33,7 +33,7 @@ def chart_analysis(candles: list[dict[str, Any]], interval: str, allow_short: bo
 def candle_figure(candles: list[dict[str, Any]], analyses: list[TradeSignal],
                   interval: str, options: bool = False) -> go.Figure:
     dates = [datetime.fromtimestamp(int(candle["time"]) / 1000, timezone.utc) for candle in candles]
-    indicator_dates = dates[49:]
+    indicator_dates = dates[49:49 + len(analyses)]
     figure = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[.75, .25], vertical_spacing=.04)
     figure.add_trace(go.Candlestick(
         x=dates, open=[bar["open"] for bar in candles], high=[bar["high"] for bar in candles],

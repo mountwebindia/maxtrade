@@ -50,7 +50,8 @@ class DeribitClient:
             raise ValueError("Invalid or mismatched options ticker")
         return result
 
-    def underlying_candles(self, currency: str, interval: str) -> list[dict[str, Any]]:
+    def underlying_candles(self, currency: str, interval: str,
+                           include_open: bool = False) -> list[dict[str, Any]]:
         now_ms = int(time() * 1000)
         count = 500 if interval == "4h" else 130
         payload = self._get(
@@ -64,9 +65,10 @@ class DeribitClient:
         if not all(isinstance(values, list) for values in arrays) or len({len(values) for values in arrays}) != 1:
             raise ValueError("Invalid underlying candle arrays")
         candles = [dict(zip(["time", *fields[1:]], values)) for values in zip(*arrays)]
-        hourly = normalize_candles(candles, "1h", count=count, now_ms=now_ms)
+        hourly = normalize_candles(candles, "1h", count=count, now_ms=now_ms, include_open=include_open)
         if interval == "4h":
-            return normalize_candles(aggregate_four_hour_candles(hourly), "4h", now_ms=now_ms)
+            return normalize_candles(aggregate_four_hour_candles(hourly, now_ms=now_ms if include_open else None),
+                                     "4h", now_ms=now_ms, include_open=include_open)
         return hourly
 
 

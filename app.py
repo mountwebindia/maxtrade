@@ -92,7 +92,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-signals_tab, chart_tab, history_tab, api_tab = st.tabs(["Signals", "Chart", "History", "Settings"])
+signals_tab, chart_tab, history_tab, api_tab = st.tabs(["Signals", "Chart", "History", "Settings"], key="navigation", on_change="rerun")
 with signals_tab:
     product = st.radio("Market type", ["Spot", "Futures", "Options"], horizontal=True, label_visibility="collapsed", key="market_type", width="stretch")
     controls = st.columns([1, 1, 1] if product == "Options" else [1, 1])
@@ -194,7 +194,8 @@ with signals_tab:
     st.markdown('<div class="empty-state"><strong>No snapshot yet</strong>Market signals will appear here.</div>', unsafe_allow_html=True)
 
 with chart_tab:
-    render_chart_page()
+    if chart_tab.open:
+        render_chart_page()
 
 with history_tab:
     st.caption("Local snapshots—not executed trades or performance records. Latest 50 scans shown.")

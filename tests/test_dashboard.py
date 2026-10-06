@@ -9,6 +9,56 @@ from maxtrade.settings import credential_status
 
 
 class DashboardTests(unittest.TestCase):
+    def test_live_chart_closed_signals_pause_and_hidden_tab(self):
+        from time import time
+        end = int(time() * 1000) // 3600000 * 3600000
+        candles = [{"time": end - (80 - index) * 3600000, "open": 100,
+                    "high": 101, "low": 99, "close": 100} for index in range(81)]
+        with patch("maxtrade.chart_page.CoinDCXClient") as client:
+            client.return_value.spot_candles.return_value = candles
+            app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=20)
+            app.run()
+            client.assert_not_called()
+            app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=20)
+            app.session_state["navigation"] = "Chart"
+            app.run()
+            self.assertFalse(app.exception)
+            snapshot = app.session_state["chart_snapshot"]
+            self.assertEqual(len(snapshot["display_candles"]), 81)
+            self.assertEqual(len(snapshot["candles"]), 80)
+            self.assertEqual(len(snapshot["analyses"]), 31)
+            self.assertTrue(any("Forming candle" in item.value for item in app.caption))
+            calls = client.return_value.spot_candles.call_count
+            next(widget for widget in app.toggle if widget.key == "chart_live").set_value(False).run()
+            app.run()
+            self.assertEqual(client.return_value.spot_candles.call_count, calls)
+            self.assertTrue(any("Paused snapshot" in item.value for item in app.caption))
+            next(button for button in app.button if button.key == "chart_refresh").click().run()
+            self.assertEqual(client.return_value.spot_candles.call_count, calls + 1)
+            AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=20).run()
+            self.assertEqual(client.return_value.spot_candles.call_count, calls + 1)
+
+    def test_backtest_results_invalidated_by_settings(self):
+        from time import time
+        end = int(time() * 1000) // 3600000 * 3600000
+        candles = [{"time": end - (80 - index) * 3600000, "open": 100, "high": 101,
+                    "low": 99, "close": 100} for index in range(80)]
+        with patch("maxtrade.chart_page.CoinDCXClient") as client:
+            client.return_value.spot_markets.return_value = [{"status": "active", "base_currency_short_name": "USDT",
+                                                              "coindcx_name": "BTCUSDT", "pair": "B-BTC_USDT"}]
+            client.return_value.spot_candles.return_value = candles
+            app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=20)
+            app.session_state["navigation"] = "Chart"
+            app.run()
+            next(button for button in app.button if button.key == "chart_browse").click().run()
+            next(button for button in app.button if button.key == "chart_refresh").click().run()
+            next(button for button in app.button if button.key == "replay_run").click().run()
+            self.assertFalse(app.exception)
+            self.assertTrue(any("No completed simulated trades" in item.value for item in app.info))
+            next(widget for widget in app.number_input if widget.key == "replay_fee").set_value(20.0).run()
+            self.assertFalse(app.exception)
+            self.assertTrue(any("does not match" in item.value for item in app.caption))
+
     def test_chart_options_refresh_and_selection_invalidation(self):
         from time import time
         end = int(time() * 1000) // 3600000 * 3600000
@@ -18,14 +68,19 @@ class DashboardTests(unittest.TestCase):
         with patch("maxtrade.chart_page.DeribitClient") as client, \
                 patch("maxtrade.chart_page.scan_options", return_value=[]):
             client.return_value.underlying_candles.return_value = candles
-            app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=20).run()
+            app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=20)
+            app.session_state["navigation"] = "Chart"
+            app.run()
             next(widget for widget in app.radio if widget.label == "Chart market type").set_value("Options").run()
             next(button for button in app.button if button.key == "chart_refresh").click().run()
             self.assertFalse(app.exception)
             self.assertEqual(len(app.get("plotly_chart")), 1)
             self.assertTrue(client.return_value.session.close.called)
             next(widget for widget in app.selectbox if widget.label == "Chart underlying").select("ETH").run()
-            self.assertEqual(len(app.get("plotly_chart")), 0)
+            self.assertEqual(len(app.get("plotly_chart")), 1)
+            self.assertEqual(app.session_state["chart_snapshot"]["selection"], ("Options", "1h", "ETH"))
+            self.assertEqual(client.return_value.underlying_candles.call_args.args, ("ETH", "1h"))
+            self.assertTrue(client.return_value.underlying_candles.call_args.kwargs["include_open"])
             client.return_value.underlying_candles.side_effect = ValueError("Feed unavailable")
             next(button for button in app.button if button.key == "chart_refresh").click().run()
             self.assertFalse(app.exception)
