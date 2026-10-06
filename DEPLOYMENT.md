@@ -20,6 +20,21 @@ Sessions last one hour and are browser-session-only; reloads may require login. 
 
 Publishing before setting these secrets deliberately locks the app. Password hashing does not configure the live secrets automatically; only the app owner can finish that step privately.
 
+## Azure OpenAI backend configuration
+
+Create an Azure OpenAI resource and a model deployment in Azure. Add the following values privately in Streamlit Community Cloud's **Manage app > Settings > Secrets**, or as server environment variables. Environment values take precedence. Do not paste the API key into chat or commit it.
+
+```toml
+AZURE_OPENAI_ENDPOINT = "https://YOUR-RESOURCE.openai.azure.com"
+AZURE_OPENAI_DEPLOYMENT = "YOUR-DEPLOYMENT-NAME"
+AZURE_OPENAI_API_VERSION = "2024-10-21"
+AZURE_OPENAI_API_KEY = "YOUR-PRIVATE-KEY"
+```
+
+Use the deployment name, not the model name, and an API version supported by that deployment. Restart after changing configuration. Settings reports configuration presence only; this does not test Azure authentication or deployment availability. All four values are required if any are provided. Keys are excluded from configuration representations.
+
+This release adds configuration only: no Azure requests, model-generated trading decisions, new cloud resources or paid inference are enabled. Resource provisioning, private credentials and a connection test remain operator steps before enabling a future AI mode. Existing deterministic analysis and real-order restrictions are unchanged.
+
 ## Current Hostinger shared hosting
 
 This app requires a persistent Python process and WebSocket support. Ordinary shared/WordPress hosting is not an appropriate runtime for Streamlit. Confirm specific capabilities with Hostinger before assuming otherwise. Uploading the repository into `public_html` will not run it.

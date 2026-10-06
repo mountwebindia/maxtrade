@@ -12,7 +12,7 @@ from maxtrade.history import ScanHistory
 from maxtrade.options import DeribitClient, scan_options
 from maxtrade.presentation import signal_card
 from maxtrade.scanner import scan_futures, scan_spot
-from maxtrade.settings import credential_status
+from maxtrade.settings import azure_openai_config, credential_status
 from maxtrade.auth import clear_session, require_login
 
 
@@ -101,7 +101,11 @@ st.markdown(
         [role="tab"]:focus-visible { outline: 2px solid #137b69; outline-offset: 2px; }
         [data-testid="stExpander"] { border-radius: 6px; border-color: var(--line); }
         [data-testid="stExpander"] summary { min-height: 44px; }
+        @media (min-width: 641px) {
+            [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] { display: none !important; }
+        }
         @media (max-width: 640px) {
+            .st-key-desktop_logout { display: none; }
             .block-container { padding: 3.8rem .9rem 6rem; }
             .desk-title { font-size: 1.4rem; }
             .signal-grid { grid-template-columns: minmax(0, 1fr); }
@@ -142,6 +146,9 @@ with signals_tab:
     interval = controls[0].selectbox("Timeframe", ["1h", "4h"])
     limit = controls[1].selectbox("Scan limit", [5, 10, 15, 20, 25, 30], index=1)
     currency = controls[2].selectbox("Underlying", ["BTC", "ETH"]) if product == "Options" else None
+    gold_only = st.selectbox("Asset group", ["All markets", "Gold-backed tokens"], key="scan_asset_group") == "Gold-backed tokens" if product != "Options" else False
+    if gold_only:
+        st.caption("PAXG / XAUT · gold-backed tokens · active CoinDCX markets only, not gold options")
     if product == "Options":
         st.caption(f"Deribit · 7–45 day expiry · premiums in {currency}")
     else:
@@ -176,14 +183,15 @@ with signals_tab:
             if product == "Options":
                 results = scan_options(client, currency, interval, limit, progress=report_progress)
             elif product == "Spot":
-                results = scan_spot(client, interval, limit, progress=report_progress)
+                results = scan_spot(client, interval, limit, progress=report_progress, **({"gold_only": True} if gold_only else {}))
             else:
-                results = scan_futures(client, interval, limit, progress=report_progress)
+                results = scan_futures(client, interval, limit, progress=report_progress, **({"gold_only": True} if gold_only else {}))
             st.session_state["scan_results"] = results
             st.session_state["scan_product"] = product
             st.session_state["scan_interval"] = interval
             st.session_state["scan_limit"] = limit
             st.session_state["scan_currency"] = currency
+            st.session_state["scan_gold_only"] = gold_only
             st.session_state["scan_time"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
             try:
                 scan_id = ScanHistory().save(product, interval, limit, st.session_state["scan_time"], results)
@@ -204,6 +212,7 @@ with signals_tab:
         or st.session_state.get("scan_interval") != interval
         or st.session_state.get("scan_limit") != limit
         or st.session_state.get("scan_currency") != currency
+        or st.session_state.get("scan_gold_only", False) != gold_only
     ):
         st.info("Settings changed. Run a scan to load matching signals.")
     else:
@@ -241,9 +250,11 @@ with chart_tab:
         render_chart_page()
 
 with history_tab:
-    st.caption("Local snapshots—not executed trades or performance records. Latest 50 scans shown.")
+    st.caption("Local analysis records · Latest 50 scans shown.")
     try:
         history = ScanHistory()
+        from maxtrade.accuracy import render_daily_accuracy
+        render_daily_accuracy(history)
         summaries = history.recent()
         if summaries:
             labels = {row["id"]: f"#{row['id']} · {row['scanned_at']} · {row['product']} / {row['interval']} · {row['markets']} markets" for row in summaries}
@@ -291,5 +302,14 @@ with api_tab:
     st.markdown("Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` and edit the copy locally. Alternatively set `COINDCX_API_KEY` and `COINDCX_API_SECRET` in the server environment. Restart the app afterward.")
     st.warning("Never paste keys into chat or commit the secrets file. Use the minimum exchange permissions available; do not grant withdrawal permissions. Do not add exchange keys to a public deployment until authentication and access controls are in place.")
     st.caption("This is a responsive web dashboard, not a native mobile app. Hosted links can be opened on a phone. Local scan history on cloud hosting may be lost when the app restarts or is redeployed, and is shared across app users.")
+    st.markdown("#### Azure OpenAI")
+    try:
+        azure_config = azure_openai_config(secrets=local_secrets)
+        st.info("Configured · model calls disabled" if azure_config else "Not configured")
+    except ValueError as error:
+        st.warning(str(error))
+    if st.button("Sign out", icon=":material/logout:", key="desktop_logout"):
+        clear_session()
+        st.rerun()
 
 st.caption("Research only · No orders · Public market scans")

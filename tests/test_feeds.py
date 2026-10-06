@@ -62,7 +62,7 @@ class ScannerTests(unittest.TestCase):
         client = CoinDCXClient()
         markets = [{"coindcx_name": name, "status": "active", "base_currency_short_name": "USDT", "pair": name} for name in ["BAD", "GOOD"]]
         tickers = [{"market": name, "last_price": "100", "volume": "10"} for name in ["BAD", "GOOD"]]
-        candles = [{"close": 100, "high": 101, "low": 99} for _ in range(80)]
+        candles = [{"time": index * 3600000, "close": 100, "high": 101, "low": 99} for index in range(80)]
         updates = []
         with patch.object(client, "spot_markets", return_value=markets), patch.object(client, "spot_tickers", return_value=tickers), patch.object(client, "spot_candles", side_effect=[requests.Timeout("timed out"), candles]):
             result = scan_spot(client, "1h", 2, progress=lambda *args: updates.append(args))
@@ -71,7 +71,7 @@ class ScannerTests(unittest.TestCase):
 
     def test_futures_uses_batch_tickers_and_active_instruments(self):
         client = CoinDCXClient()
-        candles = [{"close": 100, "high": 101, "low": 99} for _ in range(80)]
+        candles = [{"time": index * 3600000, "close": 100, "high": 101, "low": 99} for index in range(80)]
         prices = {"ACTIVE": {"mp": "100", "v": "200"}, "DELISTED": {"mp": "100", "v": "9999"}}
         with patch.object(client, "futures_instruments", return_value=["ACTIVE"]), patch.object(client, "futures_tickers", return_value=prices), patch.object(client, "futures_candles", return_value=candles):
             result = scan_futures(client, "1h", 5)
@@ -79,3 +79,22 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(result[0]["Market"], "ACTIVE")
         self.assertEqual(result[0]["Price"], 100)
         self.assertEqual(result[0]["24h volume"], 200)
+
+    def test_gold_filter_uses_active_token_identity_and_preserves_provenance(self):
+        from unittest.mock import Mock
+        client = Mock()
+        client.spot_markets.return_value = [
+            {"coindcx_name": name + "USDT", "status": "active", "base_currency_short_name": "USDT",
+             "target_currency_short_name": name, "pair": "B-" + name + "_USDT"}
+            for name in ["BTC", "PAXG", "XAUT"]]
+        client.spot_tickers.return_value = [{"market": name + "USDT", "last_price": 100, "volume": 10}
+                                           for name in ["BTC", "PAXG", "XAUT"]]
+        candles = [{"time": index * 3600000, "close": 100, "high": 101, "low": 99} for index in range(80)]
+        client.spot_candles.return_value = candles
+        rows = scan_spot(client, "1h", 5, gold_only=True)
+        self.assertEqual({row["Pair"] for row in rows}, {"B-PAXG_USDT", "B-XAUT_USDT"})
+        self.assertTrue(all(row["Signal candle time"] == 79 * 3600000 for row in rows))
+        client.futures_instruments.return_value = ["B-BTC_USDT", "B-PAXG_USDT", "B-PAXGFAKE_USDT"]
+        client.futures_tickers.return_value = {name: {"mp": 100, "v": 10} for name in client.futures_instruments.return_value}
+        client.futures_candles.return_value = candles
+        self.assertEqual([row["Pair"] for row in scan_futures(client, "1h", 5, gold_only=True)], ["B-PAXG_USDT"])

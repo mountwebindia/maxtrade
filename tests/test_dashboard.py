@@ -5,10 +5,26 @@ from unittest.mock import patch
 from streamlit.testing.v1 import AppTest
 
 from maxtrade.presentation import signal_card
-from maxtrade.settings import credential_status
+from maxtrade.settings import azure_openai_config, credential_status
 
 
 class DashboardTests(unittest.TestCase):
+    def test_azure_backend_configuration_is_optional_validated_and_redacted(self):
+        self.assertIsNone(azure_openai_config({}, {}))
+        values = {"AZURE_OPENAI_ENDPOINT": "https://example.openai.azure.com/",
+                  "AZURE_OPENAI_DEPLOYMENT": "research-model", "AZURE_OPENAI_API_VERSION": "2024-10-21",
+                  "AZURE_OPENAI_API_KEY": "test-private-key"}
+        config = azure_openai_config({}, values)
+        self.assertIsNotNone(config)
+        self.assertEqual(config.endpoint, "https://example.openai.azure.com")
+        self.assertNotIn("test-private-key", repr(config))
+        self.assertEqual(azure_openai_config({"AZURE_OPENAI_DEPLOYMENT": "override"}, values).deployment, "override")
+        for name, invalid in [("AZURE_OPENAI_API_KEY", ""), ("AZURE_OPENAI_ENDPOINT", "http://example.com"),
+                              ("AZURE_OPENAI_ENDPOINT", "https://user:password@example.com"),
+                              ("AZURE_OPENAI_DEPLOYMENT", "bad/name"), ("AZURE_OPENAI_API_VERSION", "latest")]:
+            with self.subTest(name=name, invalid=invalid), self.assertRaises(ValueError):
+                azure_openai_config({}, dict(values, **{name: invalid}))
+
     def setUp(self):
         login = patch("maxtrade.auth.require_login")
         login.start()
@@ -27,6 +43,39 @@ class DashboardTests(unittest.TestCase):
         app.sidebar.button(key="menu_signals").click().run()
         self.assertFalse(app.exception)
         self.assertEqual(app.session_state["navigation"], "Signals")
+
+    def test_gold_scan_and_daily_accuracy_controls(self):
+        with patch("maxtrade.scanner.scan_spot", return_value=[]) as scanner, \
+                patch("maxtrade.coindcx.CoinDCXClient"):
+            app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=20).run()
+            app.selectbox(key="scan_asset_group").select("Gold-backed tokens").run()
+            next(button for button in app.button if button.label == "Scan markets now").click().run()
+            self.assertFalse(app.exception)
+            self.assertTrue(scanner.call_args.kwargs["gold_only"])
+            self.assertTrue(any("not gold options" in caption.value for caption in app.caption))
+            self.assertTrue(any(button.key == "accuracy_update" for button in app.button))
+
+    def test_daily_accuracy_filters_prediction_details_by_date(self):
+        def render():
+            from unittest.mock import Mock
+            from maxtrade.accuracy import render_daily_accuracy
+            records = [{"scan_id": index, "created_at": day + "T18:01:00+00:00", "product": "Spot",
+                        "pair": "B-PAXG_USDT", "action": "LONG", "status": status,
+                        "start_ms": 1791226800000, "stop": 90, "target": 120, "result_json": None}
+                       for index, (day, status) in enumerate([("2026-10-05", "WIN"), ("2026-10-06", "LOSS")])]
+            history = Mock()
+            history.predictions.return_value = records
+            render_daily_accuracy(history)
+
+        app = AppTest.from_function(render).run()
+        self.assertFalse(app.exception)
+        self.assertEqual(app.dataframe[0].value["Target accuracy %"].tolist(), [0.0, 100.0])
+        self.assertEqual(app.dataframe[1].value["Status"].tolist(), ["LOSS"])
+        app.selectbox(key="accuracy_date").select("2026-10-05").run()
+        self.assertFalse(app.exception)
+        self.assertEqual(app.dataframe[1].value["Status"].tolist(), ["WIN"])
+        self.assertEqual(app.dataframe[1].value["Stop"].tolist(), [90])
+        self.assertEqual(app.dataframe[1].value["Target"].tolist(), [120])
 
     def test_market_research_run_saves_report_and_keeps_trade_gate_closed(self):
         from maxtrade.research import run_market_research

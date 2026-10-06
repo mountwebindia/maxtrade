@@ -59,6 +59,14 @@ Dashboard access requires server-configured username and hashed password. No def
 
 Each completed scan is saved locally in `data/scan_history.sqlite3`, including DATA ERROR rows. Open **History** to inspect and export previous snapshots after a restart. The viewer lists the latest 50; older records remain in the database. This directory is Git-ignored. Back up the file to preserve history. Storage failures do not hide current results. Archived signals are not paper fills or realized performance.
 
+### Gold-backed tokens and daily accuracy
+
+Signals > Asset group > Gold-backed tokens filters active CoinDCX PAXG/XAUT spot or futures listings. Availability depends on the current venue catalog. These are gold-backed crypto tokens, not MCX gold options; the Deribit options watchlist remains BTC/ETH only.
+
+History > Daily accuracy records new LONG/SHORT scan predictions with their market pair and completed signal-candle timestamp. Repeated product/pair/timeframe/action signals from the same candle count once. Older snapshots lacking provenance and options/NO TRADE rows are not scored. Entries use the first timeframe boundary strictly after the scan was saved, avoiding retrospective fills. The next 24 hours are checked with completed hourly OHLC bars; a stop/target tie counts as a loss, stop gaps use the adverse opening price, and an entry already outside stop/target is invalid.
+
+Target accuracy is wins divided by wins + losses + 24-hour expiries. Expiries count as misses; pending, data gaps and invalid entries remain separately visible and unscored. Daily grouping uses UTC scan date, not closing date. Per-prediction outcomes and daily CSV are available. Update outcomes fetches public candles only on request, with a recent 480-hour lookback; older missing history cannot be reconstructed with this update path. Final outcomes are immutable, but providers may revise historical bars before scoring. This is a gross-price scenario evaluation, not actual fills, fee-adjusted profitability, option-premium accuracy, or certification. Cloud-local records may disappear on restart; no background scheduling or durable storage is activated.
+
 ## Verification
 
 ```sh
