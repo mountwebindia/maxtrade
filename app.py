@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import sqlite3
-from html import escape
 
 import pandas as pd
 import streamlit as st
@@ -19,66 +18,104 @@ st.set_page_config(page_title="MaxTrade | Signal Desk", page_icon="M", layout="w
 st.markdown(
     """
     <style>
-    :root { --ink: #172c27; --muted: #697871; --paper: #f4f5ef; --line: #dce2d9; --lime: #c8ef62; }
-    .stApp { background: var(--paper); color: var(--ink); }
-    .block-container { padding: 3.5rem 1.2rem 2rem; max-width: 1050px; }
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+    :root { --ink: #192b30; --muted: #64767b; --paper: #f3f6f8; --line: #dce5e8; --lime: #137b69; }
+    .stApp { background: linear-gradient(180deg, #e8f0f3 0, var(--paper) 240px); color: var(--ink); }
+    .stApp, .stApp input, .stApp button, .stApp select { font-family: 'IBM Plex Sans', sans-serif; letter-spacing: 0; }
+    .block-container { padding: 3.8rem 1.2rem 2rem; max-width: 1050px; }
     [data-testid="stVerticalBlock"] { gap: .65rem; }
-    header[data-testid="stHeader"] { background: transparent; }
-    .eyebrow { color: #57705f; font-size: .72rem; font-weight: 700; letter-spacing: .12em; }
-    .desk-title { color: var(--ink); font-size: 1.65rem; line-height: 1.1; font-weight: 760; }
-    .desk-subtitle { color: var(--muted); margin: .3rem 0 .6rem; font-size: .85rem; }
+    header[data-testid="stHeader"] { background: #f3f6f8; }
+    .desk-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .4rem; }
+    .desk-title { color: var(--ink); font-size: 1.65rem; line-height: 1.1; font-weight: 700; }
+    .desk-subtitle { color: var(--muted); margin-top: .3rem; font-size: .75rem; }
+    .research-status { color: #137b69; background: #e1f2ed; padding: .3rem .5rem; font-size: .7rem; font-weight: 600; border-radius: 4px; white-space: nowrap; }
+    [data-testid="stRadio"] [role="radiogroup"] { width: 100%; gap: .25rem; flex-wrap: nowrap; }
+    [data-testid="stRadio"] [role="radiogroup"] > div { flex: 1; min-width: 0; }
+    [data-testid="stRadio"] label { flex: 1; justify-content: center; background: #e6edf0; padding: .5rem; border-radius: 6px; min-height: 44px; }
+    [data-testid="stRadioOption"] { width: 100%; }
+    [data-testid="stRadioOption"] > div { justify-content: center; }
+    [data-testid="stRadioOption"] > div > div:not([data-testid="stMarkdownContainer"]) { display: none; }
+    [data-testid="stRadio"] label:has(input:checked) { background: #192b30; color: white; }
+    [data-testid="stRadio"] label:has(input:focus-visible) { outline: 2px solid #137b69; outline-offset: 2px; }
+    [data-testid="stRadio"] label > div:first-child { display: none; }
+    [data-testid="stRadio"] label p { font-size: .8rem; }
+    [data-testid="stButton"] button[kind="primary"] { background: #137b69; border-color: #137b69; min-height: 48px; border-radius: 6px; }
+    [data-testid="stSelectbox"] p { font-size: .75rem; }
+    [data-testid="stSelectbox"] [data-baseweb="select"] > div { border-radius: 6px; min-height: 44px; }
     .notice { padding: .85rem 1rem; border-left: 3px solid #96bc36; background: #eaf0df; color: #334537; }
     div[data-testid="stMetric"] { background: #fff; border: 1px solid var(--line); padding: .8rem 1rem; border-radius: 6px; }
     div[data-testid="stDataFrame"] { border: 1px solid var(--line); }
         .signal-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .65rem; }
-        .signal-card { background: white; border: 1px solid var(--line); border-radius: 14px; padding: .9rem; min-width: 0; overflow-wrap: anywhere; }
+        .signal-card { background: white; border: 1px solid var(--line); border-radius: 8px; padding: .85rem; min-width: 0; overflow-wrap: anywhere; }
         .card-top { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
-        .badge { font-size: .65rem; font-weight: 700; padding: .25rem .45rem; border-radius: 20px; white-space: nowrap; }
+        .card-top > strong { font-size: .85rem; min-width: 0; }
+        .badge { font-size: .6rem; font-weight: 700; padding: .25rem .45rem; border-radius: 4px; white-space: nowrap; }
         .long { color: #235334; background: #e2f3e4; } .short, .error { color: #87362e; background: #fce9e5; }
         .neutral { color: #52615c; background: #eef1ed; }
         .card-price { font-size: 1.3rem; margin: .55rem 0; font-weight: 650; }
-        .card-price small { float: right; font-size: .75rem; font-weight: 400; color: var(--muted); }
+        .card-price { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; flex-wrap: wrap; }
+        .card-price small { font-size: .75rem; font-weight: 400; color: var(--muted); }
         .risk-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; }
+        .risk-grid > div { min-width: 0; }
         .risk-grid span, .risk-grid strong { display: block; font-size: .75rem; }
         .risk-grid span { color: var(--muted); }
         .signal-card p { font-size: .75rem; color: var(--muted); margin: .65rem 0 0; }
-        .summary { display: flex; flex-wrap: wrap; gap: .4rem; margin: .25rem 0; }
-        .summary span { background: #eaf0df; border-radius: 8px; padding: .4rem .6rem; font-size: .8rem; }
+        .signal-card details { border-top: 1px solid var(--line); margin-top: .7rem; padding-top: .4rem; }
+        .signal-card summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; justify-content: space-between; font-size: .75rem; color: var(--muted); }
+        .signal-card summary::after { content: '+'; font-size: 1rem; }
+        .signal-card details[open] summary::after { content: '-'; }
+        .summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .5rem; padding: .75rem 0; border-bottom: 1px solid var(--line); }
+        .summary span { font-size: .7rem; color: var(--muted); }
+        .summary strong { display: block; font-size: 1.2rem; color: var(--ink); font-weight: 600; }
+        .empty-state { padding: 2rem 0; text-align: center; color: var(--muted); }
+        .empty-state strong { display: block; color: var(--ink); font-size: 1.1rem; margin-bottom: .3rem; }
+        [role="tablist"] { gap: 0; }
+        [role="tab"] { flex: 1; min-height: 48px; justify-content: center; }
         @media (max-width: 640px) {
-            .block-container { padding: 3.5rem .7rem 1.5rem; }
+            .block-container { padding: 3.8rem .9rem 6rem; }
             .desk-title { font-size: 1.4rem; }
             .signal-grid { grid-template-columns: minmax(0, 1fr); }
-            [data-testid="stHorizontalBlock"] { flex-wrap: wrap; gap: .4rem; }
-            [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] { min-width: 0 !important; flex: 1 1 100% !important; width: 100% !important; }
+            [data-testid="stHorizontalBlock"] { flex-wrap: nowrap; gap: .5rem; }
+            [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] { min-width: 0 !important; flex: 1 1 0 !important; width: auto !important; }
+            [role="tablist"] { position: fixed; bottom: 0; left: 0; right: 0; z-index: 999; background: #fff; border-top: 1px solid var(--line); padding: .25rem .5rem calc(.25rem + env(safe-area-inset-bottom)); box-shadow: 0 -4px 18px #192b3008; }
+            [data-baseweb="tab-highlight"], [data-baseweb="tab-border"], .react-aria-SelectionIndicator { display: none; }
+            [role="tab"] { min-height: 52px; border-radius: 6px; font-size: .8rem; }
+            [role="tab"][aria-selected="true"] { background: #e1f2ed; color: #137b69; }
             button { min-height: 44px; }
         }
     </style>
-    <div class="eyebrow">MAXTRADE / RESEARCH MODE</div>
-    <div class="desk-title">MaxTrade Signal Desk</div>
-    <div class="desk-subtitle">CoinDCX spot/futures · Deribit options · research only</div>
+    <div class="desk-header"><div><div class="desk-title">MaxTrade</div>
+    <div class="desk-subtitle">CoinDCX / Deribit</div></div><span class="research-status">Research only</span></div>
     """,
     unsafe_allow_html=True,
 )
 
-controls = st.columns([2, 1, 1])
-product = controls[0].selectbox("Market type", ["Spot", "Futures", "Options"])
-interval = controls[1].selectbox("Candle interval", ["1h", "4h"])
-limit = controls[2].select_slider("Markets to inspect", options=[5, 10, 15, 20, 25, 30], value=10)
-
-currency = st.selectbox("Options underlying", ["BTC", "ETH"]) if product == "Options" else None
-if product == "Options":
-    st.caption(f"Deribit · {currency} options · 7–45 days to expiry · {interval} underlying trend · premiums in {currency}")
-else:
-    st.caption(f"Selected: {product} · {interval} · up to {limit} markets. Scans run on demand, not automatically.")
-scan = st.button("Scan markets now", type="primary", width="stretch")
-signals_tab, history_tab, api_tab = st.tabs(["Signals", "History", "API setup"])
+signals_tab, history_tab, api_tab = st.tabs(["Signals", "History", "Settings"])
+with signals_tab:
+    product = st.radio("Market type", ["Spot", "Futures", "Options"], horizontal=True, label_visibility="collapsed", key="market_type", width="stretch")
+    controls = st.columns([1, 1, 1] if product == "Options" else [1, 1])
+    interval = controls[0].selectbox("Timeframe", ["1h", "4h"])
+    limit = controls[1].selectbox("Scan limit", [5, 10, 15, 20, 25, 30], index=1)
+    currency = controls[2].selectbox("Underlying", ["BTC", "ETH"]) if product == "Options" else None
+    if product == "Options":
+        st.caption(f"Deribit · 7–45 day expiry · premiums in {currency}")
+    else:
+        st.caption(f"CoinDCX · {product.lower()} · {interval} candles")
+    scan = st.button("Scan markets now", type="primary", width="stretch", icon=":material/radar:")
 
 def show_signals(rows: list[dict], key: str) -> None:
-    view = st.radio("Display", ["Cards", "Table"], horizontal=True, key=f"{key}_view")
+    tools = st.columns([1, 1])
+    view = tools[0].radio("Display", ["Cards", "Table"], horizontal=True, key=f"{key}_view", label_visibility="collapsed", width="stretch")
+    selected_filter = tools[1].selectbox("Signal filter", ["All signals", "Candidates", "No trade", "Data errors"], key=f"{key}_filter", label_visibility="collapsed")
+    actions = {"Candidates": {"LONG", "SHORT", "WATCH CALL", "WATCH PUT"}, "No trade": {"NO TRADE"}, "Data errors": {"DATA ERROR"}}
+    visible = rows if selected_filter == "All signals" else [row for row in rows if row.get("Signal") in actions[selected_filter]]
+    if not visible:
+        st.info("No matching signals in this snapshot.")
+        return
     if view == "Cards":
-        st.markdown('<div class="signal-grid">' + ''.join(signal_card(row) for row in rows) + '</div>', unsafe_allow_html=True)
+        st.markdown('<div class="signal-grid">' + ''.join(signal_card(row) for row in visible) + '</div>', unsafe_allow_html=True)
     else:
-        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+        st.dataframe(pd.DataFrame(visible), hide_index=True, width="stretch")
 
 with signals_tab:
 
@@ -105,7 +142,7 @@ with signals_tab:
             st.session_state["scan_time"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
             try:
                 scan_id = ScanHistory().save(product, interval, limit, st.session_state["scan_time"], results)
-                st.success(f"Saved locally as scan #{scan_id}.")
+                st.caption(f"Snapshot #{scan_id} saved")
             except (OSError, sqlite3.Error, ValueError) as error:
                 st.warning(f"Scan completed, but history could not be saved: {error}")
         except Exception as error:
@@ -130,11 +167,12 @@ with signals_tab:
         short_count = int(frame["Signal"].eq("SHORT").sum())
         no_trade_count = int(frame["Signal"].eq("NO TRADE").sum())
         error_count = int(frame["Signal"].eq("DATA ERROR").sum())
-        st.markdown(f'<div class="summary"><span>{len(frame)} markets</span><span>{long_count} long</span><span>{short_count} short</span><span>{no_trade_count} no trade</span><span>{error_count} errors</span></div>', unsafe_allow_html=True)
+        actionable_count = long_count + short_count + int(frame["Signal"].isin(["WATCH CALL", "WATCH PUT"]).sum())
+        st.markdown(f'<div class="summary"><span><strong>{len(frame)}</strong>Markets</span><span><strong>{actionable_count}</strong>Candidates</span><span><strong>{no_trade_count}</strong>No trade</span><span><strong>{error_count}</strong>Data errors</span></div>', unsafe_allow_html=True)
         if product == "Options":
             watch_count = int(frame["Signal"].isin(["WATCH CALL", "WATCH PUT"]).sum())
-            st.caption(f"{watch_count} options research candidates · Deribit source · no CoinDCX options execution")
-        st.caption(f"Snapshot completed: {st.session_state['scan_time']} (UTC). Not auto-refreshing.")
+            st.caption(f"Deribit · {watch_count} watchlist candidates · no execution")
+        st.caption(f"Updated {st.session_state['scan_time']} · UTC")
         if error_count:
             st.warning("Some markets have unavailable or invalid data. Those rows contain no trade signal.")
         show_signals(results, "live")
@@ -148,10 +186,10 @@ with signals_tab:
             data=frame.assign(Product=product, Interval=interval, ScannedAtUTC=st.session_state["scan_time"]).to_csv(index=False).encode("utf-8"),
             file_name=f"maxtrade-{product.lower()}-{interval}.csv",
             mime="text/csv",
+            icon=":material/download:",
         )
  else:
-    st.markdown("#### Awaiting scan")
-    st.write("Choose a market type and run a scan to load current research results.")
+    st.markdown('<div class="empty-state"><strong>No snapshot yet</strong>Market signals will appear here.</div>', unsafe_allow_html=True)
 
 with history_tab:
     st.caption("Local snapshots—not executed trades or performance records. Latest 50 scans shown.")
@@ -169,6 +207,7 @@ with history_tab:
                     "Download saved snapshot CSV",
                     archived.assign(Product=snapshot["product"], Interval=snapshot["interval"], ScannedAtUTC=snapshot["scanned_at"]).to_csv(index=False).encode("utf-8"),
                     file_name=f"maxtrade-scan-{selected}.csv", mime="text/csv", key="history_csv",
+                    icon=":material/download:",
                 )
         else:
             st.info("No saved scans yet. Run a market scan to create the first snapshot.")

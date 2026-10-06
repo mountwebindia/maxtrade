@@ -11,12 +11,12 @@ from maxtrade.settings import credential_status
 class DashboardTests(unittest.TestCase):
     def test_options_state_has_enabled_scan_and_underlying_selection(self):
         app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=20).run()
-        app.selectbox[0].select("Options").run()
+        app.radio[0].set_value("Options").run()
         self.assertFalse(app.exception)
         self.assertFalse(app.button[0].disabled)
         self.assertFalse(app.selectbox[1].disabled)
-        self.assertFalse(app.select_slider[0].disabled)
-        underlying = next(widget for widget in app.selectbox if widget.label == "Options underlying")
+        self.assertEqual(app.selectbox[1].value, 10)
+        underlying = next(widget for widget in app.selectbox if widget.label == "Underlying")
         self.assertEqual(underlying.options, ["BTC", "ETH"])
         self.assertTrue(any("premiums in BTC" in caption.value for caption in app.caption))
 
@@ -27,14 +27,32 @@ class DashboardTests(unittest.TestCase):
         with patch("maxtrade.options.scan_options", return_value=rows) as scanner, \
                 patch("maxtrade.options.DeribitClient"), patch("maxtrade.history.ScanHistory"):
             app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=20).run()
-            app.selectbox[0].select("Options").run()
+            app.radio[0].set_value("Options").run()
             app.button[0].click().run()
             self.assertFalse(app.exception)
             self.assertEqual(scanner.call_args.args[1:4], ("BTC", "1h", 10))
             self.assertTrue(any("WATCH CALL" in item.value for item in app.markdown))
-            next(widget for widget in app.selectbox if widget.label == "Options underlying").select("ETH").run()
+            next(widget for widget in app.selectbox if widget.label == "Underlying").select("ETH").run()
             self.assertTrue(any("Settings changed" in item.value for item in app.info))
             self.assertFalse(any("WATCH CALL" in item.value for item in app.markdown))
+
+    def test_signal_filters_preserve_snapshot_and_csv_access(self):
+        rows = [{"Market": "BTCUSDT", "Signal": "LONG", "Reason": "Trend aligned"},
+            {"Market": "ETHUSDT", "Signal": "NO TRADE", "Reason": "No trend"}]
+        with patch("maxtrade.scanner.scan_spot", return_value=rows), \
+            patch("maxtrade.coindcx.CoinDCXClient"), patch("maxtrade.history.ScanHistory"):
+            app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=20).run()
+            app.button[0].click().run()
+            next(widget for widget in app.selectbox if widget.label == "Signal filter").select("Candidates").run()
+            cards = next(item.value for item in app.markdown if 'class="signal-grid"' in item.value)
+            self.assertIn("BTCUSDT", cards)
+            self.assertNotIn("ETHUSDT", cards)
+            self.assertIn("<details>", cards)
+            self.assertEqual(app.session_state["scan_results"], rows)
+            next(widget for widget in app.selectbox if widget.label == "Signal filter").select("Data errors").run()
+            self.assertFalse(app.exception)
+            self.assertTrue(any("No matching signals" in item.value for item in app.info))
+            self.assertTrue(any(button.label == "Download scan CSV" for button in app.get("download_button")))
 
     def test_options_card_preserves_quote_precision_and_escapes_text(self):
         card = signal_card({"Market": "<script>", "Source": "Deribit", "Signal": "WATCH CALL",
