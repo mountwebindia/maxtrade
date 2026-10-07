@@ -125,6 +125,7 @@ class PaperLedger:
         wins = sum(row['pnl'] > 0 for row in closed)
         gains = sum(max(row['pnl'], 0) for row in closed)
         losses = -sum(min(row['pnl'], 0) for row in closed)
+        loss_count = sum(row['pnl'] < 0 for row in closed)
         equity = peak = capital
         drawdown = 0.0
         daily = {}
@@ -141,6 +142,9 @@ class PaperLedger:
             item['Win rate %'] = item['Wins'] / item['Closed'] * 100
         return {'closed': len(closed), 'wins': wins, 'win_rate_pct': wins / len(closed) * 100 if closed else None,
                 'net_pnl': equity - capital, 'profit_factor': gains / losses if losses else None,
+            'average_win': gains / wins if wins else None,
+            'average_loss': -losses / loss_count if loss_count else None,
+            'expectancy': sum(row['pnl'] for row in closed) / len(closed) if closed else None,
                 'max_drawdown_pct': drawdown, 'daily': sorted(daily.values(), key=lambda item: item['Date (UTC)'], reverse=True)}
 
     def settings(self, capital: float, kill_switch: bool) -> None:

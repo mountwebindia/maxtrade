@@ -9,6 +9,59 @@ from maxtrade.settings import azure_openai_config, credential_status
 
 
 class DashboardTests(unittest.TestCase):
+    def test_worker_diagnostics_distinguishes_heartbeat_health(self):
+        def render(status):
+            from datetime import datetime, timezone
+            from maxtrade.research import render_worker_diagnostics
+            render_worker_diagnostics(status, [], datetime(2026, 10, 7, 12, tzinfo=timezone.utc))
+
+        cases = [(None, 'no completed cycle'),
+                 ({'finished_at': '2026-10-07T11:00:00+00:00', 'mode': 'watch', 'failures': 0}, 'stale heartbeat'),
+                 ({'finished_at': '2026-10-07T13:00:00+00:00', 'mode': 'watch', 'failures': 0}, 'future-dated'),
+                 ({'finished_at': '2026-10-07T11:59:00+00:00', 'mode': 'watch', 'failures': 2}, 'with failures'),
+                 ({'finished_at': '2026-10-07T11:59:00+00:00', 'mode': 'one-shot', 'failures': 0}, 'one-shot')]
+        for status, expected in cases:
+            with self.subTest(expected=expected):
+                app = AppTest.from_function(render, args=(status,)).run()
+                self.assertFalse(app.exception)
+                self.assertTrue(any(expected in warning.value for warning in app.warning))
+
+    def test_azure_diagnostics_distinguishes_failure_veto_and_clear(self):
+        def render():
+            from datetime import datetime, timezone
+            from maxtrade.research import render_worker_diagnostics
+            base = {'symbol': 'B-BTC_USDT', 'created_at': '2026-10-07T11:59:00+00:00',
+                    'ai_mode': 'Azure-assisted'}
+            reports = [dict(base, ai_error='Azure review timed out; paper entries blocked.'),
+                       dict(base, ai_review={'verdict': 'VETO', 'summary': 'Conflicting evidence',
+                                             'concerns': ['Material event risk']}),
+                       dict(base, ai_review={'verdict': 'CLEAR', 'summary': 'No additional concern', 'concerns': []}),
+                       dict(base, ai_review={'verdict': 'CLEAR', 'summary': 'Limited coverage',
+                                             'concerns': ['Coverage incomplete']})]
+            render_worker_diagnostics(None, reports, datetime.now(timezone.utc))
+
+        app = AppTest.from_function(render).run()
+        self.assertFalse(app.exception)
+        self.assertTrue(any('timed out' in warning.value for warning in app.warning))
+        self.assertTrue(any('VETO' in warning.value for warning in app.warning))
+        self.assertTrue(any('CLEAR' in warning.value for warning in app.warning))
+        self.assertTrue(any('Other evidence and risk gates still apply' in item.value for item in app.success))
+        self.assertTrue(any('Material event risk' in item.value for item in app.text))
+
+    def test_azure_transport_failures_are_distinct_and_redacted(self):
+        import requests
+        from maxtrade.azure_ai import review_evidence
+
+        config = azure_openai_config({'AZURE_OPENAI_API_KEY': 'test-private-key'}, {})
+        for failure, expected in [(requests.Timeout('test-private-key'), 'timed out'),
+                                  (requests.ConnectionError('test-private-key'), 'network request failed')]:
+            with self.subTest(expected=expected), patch('maxtrade.azure_ai.requests.Session') as session:
+                session.return_value.__enter__.return_value.post.side_effect = failure
+                with self.assertRaises(ValueError) as raised:
+                    review_evidence(config, {'evidence': []})
+                self.assertIn(expected, str(raised.exception))
+                self.assertNotIn('test-private-key', str(raised.exception))
+
     def test_azure_backend_configuration_is_optional_validated_and_redacted(self):
         self.assertIsNone(azure_openai_config({}, {}))
         values = {"AZURE_OPENAI_ENDPOINT": "https://example.openai.azure.com/",
@@ -220,6 +273,9 @@ class DashboardTests(unittest.TestCase):
             self.assertTrue(any(item.value == 'Paper: NO TRADE' for item in app.markdown))
             self.assertTrue(any('Worker private configuration unavailable' in item.value for item in app.markdown))
             self.assertEqual([metric.label for metric in app.metric], ['Research entry', 'Stop', 'Target'])
+            self.assertEqual(app.dataframe[0].value['Timeframe'].tolist(), ['1h', '4h'])
+            self.assertEqual(app.dataframe[0].value['Paper gate'].tolist(), ['BLOCKED', 'BLOCKED'])
+            self.assertTrue(any('Setup invalidation:' in item.value for item in app.caption))
 
     def test_backtest_results_invalidated_by_settings(self):
         from time import time

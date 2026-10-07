@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from maxtrade.backtest import ReplaySettings, replay
-from maxtrade.charts import candle_figure
+from maxtrade.charts import candle_figure, signal_records
 from maxtrade.signals import TradeSignal
 
 
@@ -49,6 +49,16 @@ class ReplayTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 replay(self.candles(), "1h", False, settings)
 
+    def test_replay_rejects_gaps_duplicates_and_unaligned_times(self):
+        for timestamp in (52 * 3600000, 50 * 3600000, 51 * 3600000 + 1, True):
+            with self.subTest(timestamp=timestamp):
+                candles = self.candles()
+                candles[51]['time'] = timestamp
+                with patch('maxtrade.backtest.chart_analysis') as analysis:
+                    with self.assertRaisesRegex(ValueError, 'contiguous aligned'):
+                        replay(candles, '1h', False)
+                    analysis.assert_not_called()
+
     def test_short_and_allocation_cap(self):
         with patch("maxtrade.backtest.chart_analysis", return_value=self.signals("SHORT")):
             result = replay(self.candles(), "1h", True, ReplaySettings(fee_bps=0, slippage_bps=0))
@@ -64,3 +74,21 @@ class ReplayTests(unittest.TestCase):
                 self.assertEqual(markers, [])
                 self.assertFalse({"BUY", "SELL", "CALL", "PUT"}.intersection(
                     trace.name for trace in figure.data))
+
+    def test_signal_markers_only_new_confirmed_setups_and_saved_fills(self):
+        candles = self.candles()
+        signals = self.signals()
+        records = signal_records(candles, signals, '1h')
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]['Signal'], 'BUY')
+        self.assertEqual(records[0]['Available at'].timestamp(), 51 * 3600)
+        forming = dict(candles[-1], time=60 * 3600000, close=999, high=1000)
+        figure = candle_figure(candles + [forming], signals, '1h', signals=records,
+                               paper_positions=[{'id': 1, 'opened_at': '1970-01-03T03:00:00+00:00',
+                                                 'closed_at': None, 'entry': 102, 'state': 'OPEN', 'pnl': None}])
+        marker = next(trace for trace in figure.data if trace.name == 'BUY setup')
+        self.assertEqual(len(marker.x), 1)
+        self.assertLess(marker.x[0], records[0]['Available at'])
+        self.assertTrue(any(trace.name == 'Paper entry' for trace in figure.data))
+        self.assertEqual(signal_records(candles, signals[:1], '1h'), [])
+        self.assertEqual(signal_records(candles, self.signals('SHORT'), '1h')[0]['Signal'], 'SELL')

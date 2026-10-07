@@ -7,6 +7,18 @@ from maxtrade.accuracy import evaluate_prediction, daily_accuracy, update_outcom
 
 
 class HistoryTests(unittest.TestCase):
+    def test_rejection_summary_excludes_manual_and_approved_and_deduplicates_reasons(self):
+        history = ScanHistory(self.path)
+        report = {'created_at': '2026-10-07T01:00:00+00:00', 'symbol': 'B-BTC_USDT',
+                  'paper_policy': 'autonomous-paper-v1', 'decision': 'NO TRADE',
+                  'blockers': ['stale', 'stale', 'AI veto']}
+        history.save_research(report)
+        history.save_research(dict(report, decision='BUY'))
+        history.save_research(dict(report, paper_policy='manual'))
+        rows = history.rejection_summary()
+        self.assertEqual({item['Reason'] for item in rows}, {'stale', 'AI veto'})
+        self.assertTrue(all(item['Assessments'] == 1 for item in rows))
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

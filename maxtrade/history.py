@@ -122,6 +122,20 @@ class ScanHistory:
             connection.execute("INSERT OR IGNORE INTO research_alerts (fingerprint,created_at,symbol,message) VALUES (?,?,?,?)",
                                (fingerprint, created_at, symbol, message))
 
+    def rejection_summary(self) -> list[dict[str, Any]]:
+        counts = {}
+        with closing(self._connect()) as connection:
+            for row in connection.execute('SELECT report_json FROM research_reports'):
+                report = json.loads(row['report_json'])
+                if report.get('paper_policy') != 'autonomous-paper-v1' or report.get('decision') != 'NO TRADE':
+                    continue
+                day = datetime.fromisoformat(report['created_at']).astimezone(timezone.utc).date().isoformat()
+                for reason in set(report.get('blockers', [])) or {'No recorded blocker'}:
+                    key = (day, report['symbol'], reason)
+                    counts[key] = counts.get(key, 0) + 1
+        return [{'Date (UTC)': day, 'Market': symbol, 'Reason': reason, 'Assessments': count}
+                for (day, symbol, reason), count in sorted(counts.items(), reverse=True)]
+
     def recent_alerts(self, limit: int = 50) -> list[dict[str, Any]]:
         with closing(self._connect()) as connection:
             return [dict(row) for row in connection.execute("SELECT created_at,symbol,message FROM research_alerts ORDER BY id DESC LIMIT ?", (limit,))]

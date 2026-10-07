@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from html import escape
 from math import isfinite
 from typing import Any
 
@@ -31,10 +32,27 @@ def chart_analysis(candles: list[dict[str, Any]], interval: str, allow_short: bo
     return [analyze_candles(candles[:end], allow_short=allow_short) for end in range(50, len(candles) + 1)]
 
 
+def signal_records(candles: list[dict[str, Any]], analyses: list[TradeSignal], interval: str) -> list[dict[str, Any]]:
+    records = []
+    for index, signal in enumerate(analyses):
+        if not index or signal.action not in {'LONG', 'SHORT'} or signal.action == analyses[index - 1].action:
+            continue
+        candle = candles[49 + index]
+        records.append({'Candle time': datetime.fromtimestamp(candle['time'] / 1000, timezone.utc),
+                        'Available at': datetime.fromtimestamp((candle['time'] + INTERVAL_MS[interval]) / 1000, timezone.utc),
+                        'Signal': 'BUY' if signal.action == 'LONG' else 'SELL',
+                        'Reference entry': signal.entry, 'Stop': signal.stop, 'Target': signal.target,
+                        'RSI': signal.rsi, 'Reason': signal.reason,
+                        'Marker price': candle['low'] if signal.action == 'LONG' else candle['high']})
+    return records
+
+
 def candle_figure(candles: list[dict[str, Any]], analyses: list[TradeSignal],
                   interval: str, options: bool = False, chart_type: str = "Candles",
                   indicators: tuple[str, ...] = ("EMA 20", "EMA 50", "Volume", "RSI 14"),
-                  theme: str = "Dark", logarithmic: bool = False, visible_bars: int = 80) -> go.Figure:
+                  theme: str = "Dark", logarithmic: bool = False, visible_bars: int = 80,
+                  signals: list[dict[str, Any]] | None = None,
+                  paper_positions: list[dict[str, Any]] | None = None) -> go.Figure:
     dates = [datetime.fromtimestamp(int(candle["time"]) / 1000, timezone.utc) for candle in candles]
     indicator_dates = dates[49:49 + len(analyses)]
     dark = theme == "Dark"
@@ -85,6 +103,31 @@ def candle_figure(candles: list[dict[str, Any]], analyses: list[TradeSignal],
     for name, values, color in overlays:
         figure.add_trace(go.Scatter(x=confirmed_dates, y=values, name=name, mode="lines",
                                    line={"color": color, "width": 1.2}, connectgaps=False), row=1, col=1)
+    for action, color, symbol in [('BUY', rising, 'triangle-up'), ('SELL', falling, 'triangle-down')]:
+        selected = [record for record in signals or [] if record['Signal'] == action]
+        if selected:
+            label = ('CALL bias' if action == 'BUY' else 'PUT bias') if options else action
+            figure.add_trace(go.Scatter(x=[record['Candle time'] for record in selected],
+                                       y=[record['Marker price'] for record in selected], name=f'{label} setup',
+                                       mode='markers+text', text=[label] * len(selected),
+                                       textposition='bottom center' if action == 'BUY' else 'top center',
+                                       marker={'symbol': symbol, 'size': 12, 'color': color},
+                                       customdata=[[str(record['Available at']), record['Reference entry'], record['Stop'],
+                                                    record['Target'], record['RSI'], escape(record['Reason'])] for record in selected],
+                                       hovertemplate=label + ' technical setup<br>Available %{customdata[0]}'
+                                       '<br>Reference %{customdata[1]}<br>Stop %{customdata[2]}<br>Target %{customdata[3]}'
+                                       '<br>RSI %{customdata[4]:.1f}<br>%{customdata[5]}<extra>Not a paper fill</extra>'), row=1, col=1)
+    for field, price_field, label in [('opened_at', 'entry', 'Paper entry'), ('closed_at', 'exit', 'Paper exit')]:
+        selected = [position for position in paper_positions or [] if position.get(field) and position.get(price_field)
+                    and dates[0] <= datetime.fromisoformat(position[field]) <= dates[-1] + pd.Timedelta(milliseconds=INTERVAL_MS[interval])]
+        if selected:
+            figure.add_trace(go.Scatter(x=[datetime.fromisoformat(position[field]) for position in selected],
+                                       y=[position[price_field] for position in selected], name=label, mode='markers',
+                                       marker={'symbol': 'diamond' if field == 'opened_at' else 'x', 'size': 13,
+                                               'color': '#327ba5' if field == 'opened_at' else '#d19a22'},
+                                       customdata=[[position['id'], position['state'], position.get('pnl')] for position in selected],
+                                       hovertemplate=label + ' #%{customdata[0]}<br>%{x}<br>Price %{y}'
+                                       '<br>%{customdata[1]}<br>Net P&L %{customdata[2]}<extra>Saved simulation</extra>'), row=1, col=1)
     for row, panel in enumerate(panels, start=2):
         if panel == "Volume":
             figure.add_trace(go.Bar(x=dates, y=[bar.get("volume", 0) for bar in candles], name="Volume",

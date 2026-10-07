@@ -7,7 +7,7 @@ import requests
 import pandas as pd
 import streamlit as st
 
-from maxtrade.charts import candle_figure, chart_analysis
+from maxtrade.charts import candle_figure, chart_analysis, signal_records
 from maxtrade.backtest import ReplaySettings, replay
 from maxtrade.coindcx import CoinDCXClient, INTERVAL_MS, normalize_candles
 from maxtrade.options import DeribitClient, scan_options, render_option_chain
@@ -61,6 +61,8 @@ def render_chart_page() -> None:
                                   "Support / resistance", "Volume", "RSI 14", "MACD"],
                    default=["EMA 20", "EMA 50", "Volume", "RSI 14"], key="chart_indicators")
     st.toggle("Log price scale", key="chart_log")
+    st.toggle('BUY / SELL setups', value=True, key='chart_signals')
+    st.toggle('Saved paper fills', value=True, key='chart_paper_fills')
     live = st.toggle("Live updates · 10s", value=True, key="chart_live")
     st.fragment(run_every="10s" if live else None)(render_chart_snapshot)(product, interval, pair, live)
     render_market_research(product, pair)
@@ -82,6 +84,10 @@ def render_trade_status(product: str, pair: str, latest, stale: bool) -> None:
         for column, label, value in zip(columns, ("Research entry", "Stop", "Target"),
                                         (latest.entry, latest.stop, latest.target)):
             column.metric(label, display_number(value))
+        if latest.action == 'LONG':
+            st.caption('Setup invalidation: next completed candle fails price > EMA20 > EMA50 or RSI 50-70. Paper stop remains the saved position stop.')
+        else:
+            st.caption('Setup invalidation: next completed candle fails price < EMA20 < EMA50 or RSI 30-50. SHORT is research only; paper spot entries are BUY-only.')
     st.caption("Completed-candle setup only; not permission to enter. Paper fills require fresh 1h/4h agreement and all risk checks.")
     try:
         ledger = PaperLedger()
@@ -110,10 +116,20 @@ def render_trade_status(product: str, pair: str, latest, stale: bool) -> None:
             blockers = list(dict.fromkeys(blockers))
             st.write(f"Paper: {'BUY ELIGIBLE' if not blockers else 'NO TRADE'}")
             st.caption(f"Full assessment: {report['created_at']} | expires {report['expires_at']}")
-            if report['evidence']:
-                st.dataframe([{'Timeframe': item['interval'], 'Direction': item['action'],
-                               'Candle closed': item['event_time'], 'Expires': item['expires_at']}
-                              for item in report['evidence']], hide_index=True, width='stretch')
+            age = (now - datetime.fromisoformat(report['created_at'])).total_seconds()
+            st.caption(f'Assessment age: {age / 60:.1f} minutes' if age >= 0 else 'Assessment timestamp is in the future; unverified.')
+            checklist = []
+            for timeframe in ('1h', '4h'):
+                matches = [item for item in report['evidence'] if item['interval'] == timeframe]
+                item = matches[0] if len(matches) == 1 else None
+                fresh = bool(item and datetime.fromisoformat(item['event_time']) <= now
+                             < datetime.fromisoformat(item['expires_at']))
+                checklist.append({'Timeframe': timeframe, 'Direction': item['action'] if item else 'MISSING',
+                                  'Paper gate': 'PASS' if fresh and item['action'] == 'LONG' else 'BLOCKED',
+                                  'Freshness': 'FRESH' if fresh else 'STALE / MISSING',
+                                  'Candle closed': item['event_time'] if item else None,
+                                  'Expires': item['expires_at'] if item else None})
+            st.dataframe(checklist, hide_index=True, width='stretch')
             for blocker in blockers:
                 st.write(f"- {blocker}")
         else:
@@ -191,9 +207,19 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool) ->
     indicators = tuple(st.session_state.get("chart_indicators", ["EMA 20", "EMA 50", "Volume", "RSI 14"]))
     logarithmic = st.session_state.get("chart_log", False)
     visible = st.session_state.get("chart_visible", 80)
+    records = signal_records(candles, chart_analysis(candles, interval, allow_short=True), interval)
+    paper_positions = []
+    if product == 'Spot' and st.session_state.get('chart_paper_fills', True):
+        from maxtrade.paper import PaperLedger
+        try:
+            paper_positions = [position for position in PaperLedger().positions() if position['symbol'] == pair]
+        except (OSError, sqlite3.Error, ValueError):
+            st.warning('Saved paper fills unavailable on this database.')
     figure = candle_figure(display_candles, analyses, interval, options=product == "Options",
                            chart_type=style, indicators=indicators, theme=theme,
-                           logarithmic=logarithmic, visible_bars=visible)
+                           logarithmic=logarithmic, visible_bars=visible,
+                           signals=records if st.session_state.get('chart_signals', True) else None,
+                           paper_positions=paper_positions)
     figure.update_layout(uirevision=repr((selection, style, indicators, logarithmic, visible)),
                           editrevision="|".join(selection))
     st.plotly_chart(figure,
@@ -203,6 +229,16 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool) ->
                                               "modeBarButtonsToRemove": ["select2d", "lasso2d"],
                                               "toImageButtonOptions": {"filename": "maxtrade_chart", "scale": 2}},
                     key="candle_chart")
+    st.caption('Arrows: completed-candle technical setups, not executed trades. Spot SELL is bearish research, not a short order. Diamonds/crosses: saved paper entry/exit on this database only.')
+    with st.expander('Past signal records', expanded=True):
+        st.caption('Recomputed from loaded completed candles only; not a contemporaneously saved recommendation. First warm-up setup is excluded. Options labels describe underlying bias, not option premium.')
+        if records:
+            table = pd.DataFrame(records).drop(columns=['Marker price']).iloc[::-1]
+            st.dataframe(table, hide_index=True, width='stretch')
+            st.download_button('Signal history CSV', table.to_csv(index=False), file_name='chart-signal-history.csv',
+                               mime='text/csv', icon=':material/download:', key='chart_signal_csv')
+        else:
+            st.info('No new BUY/SELL setup transitions in the loaded completed candles.')
     st.subheader("Closed-candle details")
     st.write(f"Technical direction: {latest.action}")
     st.write(latest.reason)
@@ -230,7 +266,7 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool) ->
     else:
         render_replay(snapshot, interval, product)
     with st.expander("Research rules"):
-        st.write("Chart indicators use completed candles. Signal markers and trade-level overlays are disabled. Drawings are temporary browser annotations, not orders or saved trading instructions.")
+        st.write("Chart indicators and setup markers use completed candles. Technical arrows are separate from saved paper fills. Drawings are temporary browser annotations, not orders or saved trading instructions.")
         st.caption("EMA200 needs 200 closed candles. Bollinger Bands use 20 closes and two population standard deviations. Support/resistance are the prior 20-bar low/high, not predictive zones. MACD uses 12/26 EMAs and a 9-period signal. UTC-day VWAP excludes the first loaded day because its opening history may be incomplete; zero volume stays blank. Indicator warm-ups remain blank.")
         if product == "Spot":
             st.caption("Spot is buy-only research. Sell/short setups are available on Futures; no position-aware exit rule exists.")

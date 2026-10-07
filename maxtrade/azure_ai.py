@@ -61,8 +61,12 @@ def review_evidence(config: AzureOpenAIConfig, report: dict[str, Any]) -> dict[s
                 result = json.loads(''.join(part['text'] for part in parts if part['type'] == 'output_text'))
             else:
                 result = json.loads(document['choices'][0]['message']['content'])
-    except (requests.RequestException, KeyError, IndexError, TypeError, AttributeError, json.JSONDecodeError) as error:
-        raise ValueError('Azure review unavailable or malformed; paper entries blocked.') from error
+    except requests.Timeout as error:
+        raise ValueError('Azure review timed out; paper entries blocked.') from error
+    except requests.RequestException as error:
+        raise ValueError('Azure network request failed; paper entries blocked.') from error
+    except (KeyError, IndexError, TypeError, AttributeError, json.JSONDecodeError) as error:
+        raise ValueError('Azure response malformed; paper entries blocked.') from error
     if (not isinstance(result, dict) or not isinstance(result.get('verdict'), str)
             or result['verdict'] not in {'CLEAR', 'VETO', 'UNCERTAIN'}
             or not isinstance(result.get('summary'), str) or len(result['summary']) > 2000

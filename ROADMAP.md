@@ -10,6 +10,7 @@
 7. Production (pending): shared durable database, a single supervised hosted worker, off-host backups and heartbeat monitoring. Freeze policy while collecting forward paper outcomes; propose updates on scheduled evaluation, not after individual wins/losses. No real orders or profitability guarantee.
 
 ## Completed
+- Pre-hosting reliability increment: saved Azure failure/verdict/concern diagnostics, one-shot versus watch heartbeat warnings, above-chart 1h/4h freshness checklist and exact setup invalidation, closed-trade net expectancy/average win-loss, archived rejection counts/CSV, and fail-closed replay continuity checks. Hosted storage, private integration configuration and current hourly-policy certification remain separate pending gates.
 - Public spot and USDT futures scanning at 1h/4h.
 - Explainable EMA/RSI signals and ATR reference levels.
 - Completed-candle validation, per-market error handling, CSV export.

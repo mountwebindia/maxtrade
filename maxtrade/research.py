@@ -247,6 +247,53 @@ def render_market_research(product: str, symbol: str) -> None:
             st.caption("No matching research report.")
 
 
+def render_worker_diagnostics(status: dict | None, reports: list[dict], now: datetime) -> None:
+    import streamlit as st
+
+    st.markdown('#### Worker and Azure diagnostics')
+    if not status:
+        st.warning('Worker: no completed cycle on this database.')
+    else:
+        st.caption(f"Last cycle: {status['finished_at']} · mode: {status['mode']} · failures: {status['failures']}")
+        try:
+            age = (now - datetime.fromisoformat(status['finished_at'])).total_seconds()
+        except (ValueError, TypeError):
+            age = -1
+        if age < 0:
+            st.warning('Worker: invalid or future-dated heartbeat; health unverified.')
+        elif age > 1800:
+            st.warning('Worker: stale heartbeat. No completed worker cycle in the last 30 minutes.')
+        elif status['failures']:
+            st.warning('Worker: recent cycle completed with failures; inspect saved review errors and backend logs.')
+        else:
+            st.success('Worker: recent cycle completed without reported failures.')
+        if status['mode'] != 'watch':
+            st.warning('Always-on worker unverified: the last cycle was one-shot, not supervised watch mode.')
+        else:
+            st.caption('Watch-mode heartbeat records the last completed cycle, not current process liveness.')
+    if not reports:
+        st.info('Azure: no saved autonomous assessment on this database.')
+    for report in reports:
+        st.write(f"{report['symbol']} · assessed {report['created_at']}")
+        if report.get('ai_error'):
+            st.warning(f"Azure unavailable: {report['ai_error']}")
+        elif report.get('ai_mode') != 'Azure-assisted':
+            st.info('Azure not requested: this assessment used Deterministic mode.')
+        elif not report.get('ai_review'):
+            st.warning('Azure unavailable: no structured review saved for this assessment.')
+        else:
+            review = report['ai_review']
+            verdict = review['verdict']
+            concerns = review['concerns']
+            if verdict == 'CLEAR' and not concerns:
+                st.success('Azure: CLEAR, no additional concerns. Other evidence and risk gates still apply.')
+            else:
+                st.warning(f'Azure: {verdict} · new entries blocked by this review.')
+            st.text(review['summary'])
+            for concern in concerns:
+                st.text(f'Concern: {concern}')
+
+
 def render_paper_account() -> None:
     import sqlite3
     import streamlit as st
@@ -300,6 +347,12 @@ def render_paper_account() -> None:
         metrics[0].metric("Net paper win rate", f"{performance['win_rate_pct']:.1f}%" if performance['closed'] else "No closed trades")
         metrics[1].metric("Closed paper trades", performance['closed'])
         metrics[2].metric("Net paper P&L (USDT)", f"{performance['net_pnl']:,.2f}")
+        averages = st.columns(3)
+        for column, label, field in zip(averages, ('Average net win (USDT)', 'Average net loss (USDT)',
+                                                 'Net expectancy / trade (USDT)'),
+                                        ('average_win', 'average_loss', 'expectancy')):
+            value = performance[field]
+            column.metric(label, f'{value:,.2f}' if value is not None else 'N/A')
         st.caption(f"Realized max drawdown: {performance['max_drawdown_pct']:.2f}% · profit factor: "
                    + (f"{performance['profit_factor']:.2f}" if performance['profit_factor'] is not None else "N/A (no gross losses)"))
         if performance['daily']:
@@ -335,12 +388,19 @@ def render_paper_account() -> None:
             st.dataframe([{'Market': symbol, 'Assessed': report['created_at'],
                            'Decision': report['decision'], 'Blockers': '; '.join(report['blockers'])}
                           for symbol, report in latest_reports.items()], hide_index=True, width='stretch')
-        if status:
-            st.caption(f"Last cycle: {status['finished_at']} · mode: {status['mode']} · failures: {status['failures']}")
-            if (datetime.now(timezone.utc) - datetime.fromisoformat(status['finished_at'])).total_seconds() > 1800:
-                st.warning('No completed worker cycle in the last 30 minutes.')
-        else:
-            st.warning('No completed paper worker cycle on this database.')
+        render_worker_diagnostics(status, list(latest_reports.values()), datetime.now(timezone.utc))
+        rejections = ScanHistory(ledger.path).rejection_summary()
+        if rejections:
+            with st.expander('Paper rejection history'):
+                import pandas as pd
+                dates = sorted({item['Date (UTC)'] for item in rejections}, reverse=True)
+                selected = st.selectbox('Assessment date (UTC)', dates, key='paper_rejection_date')
+                table = pd.DataFrame([item for item in rejections if item['Date (UTC)'] == selected])
+                st.dataframe(table, hide_index=True, width='stretch')
+                st.caption('Saved autonomous NO TRADE assessments only. One assessment can have multiple reasons; counts are not missed trades.')
+                st.download_button('Rejection history CSV', pd.DataFrame(rejections).to_csv(index=False),
+                                   file_name='paper-rejections.csv', mime='text/csv', icon=':material/download:',
+                                   key='paper_rejection_csv')
         if st.button("Reconcile paper positions", icon=":material/sync:"):
             from maxtrade.coindcx import CoinDCXClient
 

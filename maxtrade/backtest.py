@@ -35,6 +35,15 @@ def replay(candles: list[dict[str, Any]], interval: str, allow_short: bool,
     settings.validate()
     if not allow_short and settings.funding_bps_8h:
         raise ValueError("Spot simulations cannot include futures funding")
+    if interval not in INTERVAL_MS:
+        raise ValueError("Unsupported replay interval")
+    duration = INTERVAL_MS[interval]
+    for index, candle in enumerate(candles):
+        timestamp = candle['time']
+        if (isinstance(timestamp, bool) or not isinstance(timestamp, (int, float))
+                or not isfinite(timestamp) or timestamp % duration
+                or (index and timestamp != candles[index - 1]['time'] + duration)):
+            raise ValueError("Replay requires ordered contiguous aligned candles; gaps are not filled")
     analyses = chart_analysis(candles, interval, allow_short)
     if len(candles) < 52:
         raise ValueError("At least 52 completed candles are required for replay")
