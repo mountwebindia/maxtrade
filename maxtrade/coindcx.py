@@ -9,7 +9,9 @@ import requests
 API_ROOT = "https://api.coindcx.com"
 PUBLIC_ROOT = "https://public.coindcx.com"
 TIMEOUT_SECONDS = 12
-INTERVAL_MS = {"1h": 3_600_000, "4h": 14_400_000}
+INTERVAL_MS = {"1m": 60_000, "5m": 300_000, "15m": 900_000, "30m": 1_800_000,
+               "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000,
+               **{f'{minutes}m': minutes * 60_000 for minutes in (2, 3, 45, 120, 180)}}
 
 
 def normalize_candles(
@@ -36,19 +38,23 @@ def normalize_candles(
     return completed
 
 
-def aggregate_four_hour_candles(candles: list[dict[str, Any]], now_ms: int | None = None) -> list[dict[str, Any]]:
+def aggregate_candles(candles: list[dict[str, Any]], source_interval: str, interval: str,
+                      now_ms: int | None = None) -> list[dict[str, Any]]:
+    source_duration, duration = INTERVAL_MS[source_interval], INTERVAL_MS[interval]
+    if duration % source_duration or duration < source_duration:
+        raise ValueError('Chart interval must be a multiple of the source interval')
     groups: dict[int, list[dict[str, Any]]] = {}
     for candle in candles:
         timestamp = int(candle["time"])
-        bucket = timestamp // INTERVAL_MS["4h"] * INTERVAL_MS["4h"]
+        bucket = timestamp // duration * duration
         groups.setdefault(bucket, []).append(candle)
     result = []
     for bucket, bars in sorted(groups.items()):
         bars = sorted(bars, key=lambda bar: int(bar["time"]))
-        expected = 4
-        if now_ms is not None and bucket <= now_ms < bucket + INTERVAL_MS["4h"]:
-            expected = (now_ms - bucket) // INTERVAL_MS["1h"] + 1
-        if [int(bar["time"]) for bar in bars] != [bucket + i * INTERVAL_MS["1h"] for i in range(expected)]:
+        expected = duration // source_duration
+        if now_ms is not None and bucket <= now_ms < bucket + duration:
+            expected = (now_ms - bucket) // source_duration + 1
+        if [int(bar["time"]) for bar in bars] != [bucket + index * source_duration for index in range(expected)]:
             continue
         result.append({
             "time": bucket, "open": float(bars[0]["open"]),
@@ -58,6 +64,10 @@ def aggregate_four_hour_candles(candles: list[dict[str, Any]], now_ms: int | Non
             "volume": sum(float(bar["volume"]) for bar in bars),
         })
     return result
+
+
+def aggregate_four_hour_candles(candles: list[dict[str, Any]], now_ms: int | None = None) -> list[dict[str, Any]]:
+    return aggregate_candles(candles, '1h', '4h', now_ms)
 
 
 class CoinDCXClient:
@@ -78,6 +88,15 @@ class CoinDCXClient:
 
     def spot_candles(self, pair: str, interval: str, count: int = 120,
                      include_open: bool = False) -> list[dict[str, Any]]:
+        if interval in ('2m', '3m', '45m', '120m', '180m'):
+            return self.custom_candles(pair, interval, count, include_open)
+        if interval in ('5m', '30m'):
+            source = '1m' if interval == '5m' else '15m'
+            now_ms = int(time.time() * 1000)
+            source_count = min(count * (INTERVAL_MS[interval] // INTERVAL_MS[source]) + 5, 499)
+            candles = self.spot_candles(pair, source, count=source_count, include_open=include_open)
+            bars = aggregate_candles(candles, source, interval, now_ms if include_open else None)
+            return normalize_candles(bars, interval, count, now_ms, include_open=include_open)
         if interval == "4h":
             now_ms = int(time.time() * 1000)
             hourly = self.spot_candles(pair, "1h", count=count * 4 + 4, include_open=include_open)
@@ -113,17 +132,31 @@ class CoinDCXClient:
 
     def futures_candles(self, pair: str, interval: str, count: int = 120,
                         include_open: bool = False) -> list[dict[str, Any]]:
+        if interval in ('2m', '3m', '45m', '120m', '180m'):
+            return self.custom_candles(pair, interval, count, include_open, futures=True)
         end_time = int(time.time())
-        interval_minutes = {"1h": 60, "4h": 240}[interval]
+        interval_minutes = INTERVAL_MS[interval] // 60_000
         payload = self._get(
             "/market_data/candlesticks",
             {
                 "pair": pair,
                 "from": end_time - (count + 1) * interval_minutes * 60,
                 "to": end_time,
-                "resolution": str(interval_minutes),
+                "resolution": '1D' if interval == '1d' else str(interval_minutes),
                 "pcode": "f",
             },
             root=PUBLIC_ROOT,
         )
         return normalize_candles(payload, interval, count, end_time * 1000, include_open=include_open)
+
+    def custom_candles(self, pair: str, interval: str, count: int, include_open: bool,
+                       futures: bool = False) -> list[dict[str, Any]]:
+        duration = INTERVAL_MS[interval]
+        source = next(value for value in ('1h', '15m', '5m', '1m')
+                      if duration % INTERVAL_MS[value] == 0)
+        now_ms = int(time.time() * 1000)
+        ratio = duration // INTERVAL_MS[source]
+        method = self.futures_candles if futures else self.spot_candles
+        candles = method(pair, source, count=min(count * ratio + ratio, 499), include_open=include_open)
+        bars = aggregate_candles(candles, source, interval, now_ms if include_open else None)
+        return normalize_candles(bars, interval, count, now_ms, include_open=include_open)

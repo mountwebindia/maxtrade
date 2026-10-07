@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
+from urllib.parse import urlencode
 import sqlite3
 
 import requests
@@ -17,11 +19,83 @@ from maxtrade.research import render_market_research
 from maxtrade.auth import require_chart_login
 
 
-def render_chart_page() -> None:
+def chart_workspace_url(product: str, pair: str, interval: str, preferences: dict) -> str:
+    return '?' + urlencode({'view': 'chart', 'product': product, 'pair': pair, 'interval': interval,
+                            'layout': json.dumps(preferences)})
+
+
+def render_chart_page(workspace: bool = False) -> None:
+    if workspace:
+        st.markdown('<style>.block-container {max-width: none; padding: 1rem;} .desk-header {display:none;} header[data-testid="stHeader"] {display:none;}</style>', unsafe_allow_html=True)
+        with st.expander('Chart settings', expanded=False, icon=':material/tune:'):
+            product, interval, pair, live = render_chart_controls(workspace)
+    else:
+        product, interval, pair, live = render_chart_controls(workspace)
+    st.fragment(run_every='10s' if live else None)(render_chart_snapshot)(product, interval, pair, live, workspace)
+    if not workspace:
+        render_market_research(product, pair)
+
+
+def render_chart_controls(workspace: bool = False) -> tuple[str, str, str, bool]:
+    with st.expander('Chart layout', expanded=False):
+        uploaded = st.file_uploader('Load saved layout', type=['json'], key='chart_layout_upload', max_upload_size=1)
+        if uploaded is not None and st.session_state.get('chart_layout_imported') != uploaded.getvalue():
+            try:
+                document = json.loads(uploaded.getvalue())
+                preferences = document['preferences']
+                if not isinstance(preferences, dict):
+                    raise ValueError('Invalid chart layout')
+                st.query_params['layout'] = json.dumps(preferences)
+                st.session_state.pop('chart_route_loaded', None)
+                st.session_state['chart_layout_imported'] = uploaded.getvalue()
+                if not workspace:
+                    for key in ('chart_style', 'chart_theme', 'chart_visible', 'chart_indicators',
+                                'chart_log', 'chart_signals', 'chart_paper_fills'):
+                        st.session_state.pop(key, None)
+                st.rerun()
+            except (ValueError, KeyError, TypeError):
+                st.error('Invalid saved chart layout.')
+    if (workspace or 'layout' in st.query_params) and not st.session_state.get('chart_route_loaded'):
+        product = st.query_params.get('product', 'Spot')
+        interval = st.query_params.get('interval', '1h')
+        if product in ('Spot', 'Futures', 'Options'):
+            st.session_state['chart_product'] = product
+        if interval in INTERVAL_MS:
+            st.session_state['chart_interval'] = interval if interval in ('1m', '5m', '15m', '30m', '1h', '4h', '1d') else 'Custom'
+            if st.session_state['chart_interval'] == 'Custom':
+                st.session_state['chart_custom_minutes'] = INTERVAL_MS[interval] // 60_000
+        pair = st.query_params.get('pair', '')
+        if product == 'Options' and pair in ('BTC', 'ETH'):
+            st.session_state['chart_underlying'] = pair
+        elif pair.startswith('B-') and len(pair) <= 64 and all(character.isalnum() or character in '-_' for character in pair):
+            name = pair[2:].replace('_', '') if product == 'Spot' else pair
+            st.session_state[f'chart_catalog_{product}'] = {name: pair}
+            st.session_state[f'chart_market_{product}'] = name
+        try:
+            preferences = json.loads(st.query_params.get('layout', '{}'))
+            choices = {'chart_style': ['Candles', 'Line', 'Area'], 'chart_theme': ['Dark', 'Light'],
+                       'chart_visible': [40, 80, 120], 'chart_log': [True, False],
+                       'chart_signals': [True, False], 'chart_paper_fills': [True, False]}
+            if isinstance(preferences, dict):
+                for key, options in choices.items():
+                    if preferences.get(key) in options:
+                        st.session_state[key] = preferences[key]
+                indicators = preferences.get('chart_indicators')
+                if isinstance(indicators, list) and all(value in CHART_INDICATORS for value in indicators):
+                    st.session_state['chart_indicators'] = indicators
+        except (ValueError, TypeError):
+            pass
+        st.session_state['chart_route_loaded'] = True
+    if workspace:
+        st.markdown('<style>.block-container {max-width: none; padding: 1rem;} .desk-header {display:none;} header[data-testid="stHeader"] {display:none;}</style>', unsafe_allow_html=True)
     product = st.radio("Chart market type", ["Spot", "Futures", "Options"], horizontal=True,
                        label_visibility="collapsed", key="chart_product", width="stretch")
     controls = st.columns(2)
-    interval = controls[0].selectbox("Chart timeframe", ["1h", "4h"], key="chart_interval")
+    intervals = ['1h', '4h', '1m', '5m', '15m', '30m', '1d', 'Custom']
+    interval = controls[0].selectbox("Chart timeframe", intervals, key="chart_interval")
+    if interval == 'Custom':
+        minutes = controls[0].selectbox('Custom interval (minutes)', [2, 3, 45, 120, 180], key='chart_custom_minutes')
+        interval = f'{minutes}m'
     if product == "Options":
         market = controls[1].selectbox("Chart underlying", ["BTC", "ETH"], key="chart_underlying")
         pair = market
@@ -57,15 +131,33 @@ def render_chart_page() -> None:
     toolbar[0].selectbox("Chart style", ["Candles", "Line", "Area"], key="chart_style")
     toolbar[1].selectbox("Chart theme", ["Dark", "Light"], key="chart_theme")
     toolbar[2].selectbox("Visible candles", [80, 40, 120], key="chart_visible")
-    st.multiselect("Indicators", ["EMA 20", "EMA 50", "EMA 200", "Bollinger Bands", "VWAP (UTC day)",
-                                  "Support / resistance", "Volume", "RSI 14", "MACD"],
+    st.multiselect("Indicators", CHART_INDICATORS,
                    default=["EMA 20", "EMA 50", "Volume", "RSI 14"], key="chart_indicators")
     st.toggle("Log price scale", key="chart_log")
     st.toggle('BUY / SELL setups', value=True, key='chart_signals')
     st.toggle('Saved paper fills', value=True, key='chart_paper_fills')
+    st.selectbox('Time window', ['Latest candles', 'All loaded candles', 'Custom UTC range'], key='chart_window')
+    if st.session_state['chart_window'] == 'Custom UTC range':
+        dates = st.columns(2)
+        dates[0].text_input('From (UTC)', placeholder='2026-10-07T00:00:00+00:00', key='chart_from')
+        dates[1].text_input('To (UTC)', placeholder='2026-10-07T12:00:00+00:00', key='chart_to')
+    preferences = {key: st.session_state[key] for key in ('chart_style', 'chart_theme', 'chart_visible',
+                   'chart_indicators', 'chart_log', 'chart_signals', 'chart_paper_fills')}
+    url = chart_workspace_url(product, pair, interval, preferences)
+    tools = st.columns(2)
+    tools[0].link_button('Open chart in new tab', url, icon=':material/open_in_new:', width='stretch')
+    if st.button('Save layout to URL', icon=':material/bookmark:', key='chart_bookmark'):
+        st.query_params.update({'product': product, 'pair': pair, 'interval': interval,
+                                'layout': json.dumps(preferences)})
+    tools[1].download_button('Save layout', json.dumps({'url': url, 'preferences': preferences}, indent=2),
+                             file_name='maxtrade-chart-layout.json', mime='application/json',
+                             icon=':material/save:', key='chart_layout_download', width='stretch')
     live = st.toggle("Live updates · 10s", value=True, key="chart_live")
-    st.fragment(run_every="10s" if live else None)(render_chart_snapshot)(product, interval, pair, live)
-    render_market_research(product, pair)
+    return product, interval, pair, live
+
+
+CHART_INDICATORS = ['EMA 20', 'EMA 50', 'EMA 200', 'Bollinger Bands', 'VWAP (UTC day)',
+                    'Support / resistance', 'Volume', 'RSI 14', 'MACD']
 
 
 def render_trade_status(product: str, pair: str, latest, stale: bool) -> None:
@@ -145,7 +237,7 @@ def render_trade_status(product: str, pair: str, latest, stale: bool) -> None:
         st.warning(f"Paper: NO TRADE | Risk status unavailable: {error}")
 
 
-def render_chart_snapshot(product: str, interval: str, pair: str, live: bool) -> None:
+def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, workspace: bool = False) -> None:
     require_chart_login()
     selection = (product, interval, pair)
     refresh = st.button("Refresh chart", type="primary", icon=":material/refresh:", width="stretch", key="chart_refresh")
@@ -167,7 +259,7 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool) ->
                 st.session_state["chart_snapshot"] = {"selection": selection, "candles": candles, "analyses": analyses,
                                                      "display_candles": display_candles,
                                                      "fetched": datetime.now(timezone.utc).isoformat(timespec="seconds")}
-                if product == "Options":
+                if product == "Options" and not workspace and interval in ('1h', '4h'):
                     try:
                         age = (datetime.now(timezone.utc) - datetime.fromisoformat(previous["contracts_fetched"])).total_seconds() if previous and previous.get("contracts_fetched") else 60
                         if not refresh and previous and previous["selection"] == selection and age < 60:
@@ -193,7 +285,8 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool) ->
     stale = (datetime.now(timezone.utc) - close_time).total_seconds() > INTERVAL_MS[interval] / 1000
     if stale:
         st.warning("Snapshot is outdated. Refresh before assessing a new setup.")
-    render_trade_status(product, pair, latest, stale)
+    if not workspace:
+        render_trade_status(product, pair, latest, stale)
     st.caption(f"Last closed candle {close_time.isoformat(timespec='minutes')} · fetched {snapshot['fetched']}")
     display_candles = snapshot["display_candles"]
     forming = int(display_candles[-1]["time"]) > int(candles[-1]["time"])
@@ -222,6 +315,22 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool) ->
                            paper_positions=paper_positions)
     figure.update_layout(uirevision=repr((selection, style, indicators, logarithmic, visible)),
                           editrevision="|".join(selection))
+    window = st.session_state.get('chart_window', 'Latest candles')
+    figure.update_layout(uirevision=repr((selection, style, indicators, logarithmic, visible,
+                                          window, st.session_state.get('chart_from'), st.session_state.get('chart_to'))))
+    if window == 'All loaded candles':
+        figure.update_xaxes(autorange=True)
+    elif window == 'Custom UTC range':
+        try:
+            start = datetime.fromisoformat(st.session_state.get('chart_from', ''))
+            end = datetime.fromisoformat(st.session_state.get('chart_to', ''))
+            if start.tzinfo is None or end.tzinfo is None or start >= end:
+                raise ValueError('Use timezone-aware UTC timestamps with From before To.')
+            figure.update_xaxes(range=[start, end], autorange=False)
+        except ValueError as error:
+            st.warning(f'Custom time range unavailable: {error}')
+    if workspace:
+        figure.update_layout(height=800)
     st.plotly_chart(figure,
                     width="stretch", config={"displaylogo": False, "scrollZoom": True,
                                               "displayModeBar": True,
@@ -229,6 +338,15 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool) ->
                                               "modeBarButtonsToRemove": ["select2d", "lasso2d"],
                                               "toImageButtonOptions": {"filename": "maxtrade_chart", "scale": 2}},
                     key="candle_chart")
+    st.download_button('Save interactive chart', figure.to_html(include_plotlyjs=True, full_html=True),
+                       file_name='maxtrade-chart.html', mime='text/html', icon=':material/download:',
+                       key='chart_html')
+    if workspace:
+        export = pd.DataFrame(display_candles)
+        export['time'] = pd.to_datetime(export['time'], unit='ms', utc=True)
+        st.download_button('Candle CSV', export.to_csv(index=False), file_name='maxtrade_candles.csv',
+                           mime='text/csv', icon=':material/download:', key='chart_csv')
+        return
     st.caption('Arrows: completed-candle technical setups, not executed trades. Spot SELL is bearish research, not a short order. Diamonds/crosses: saved paper entry/exit on this database only.')
     with st.expander('Past signal records', expanded=True):
         st.caption('Recomputed from loaded completed candles only; not a contemporaneously saved recommendation. First warm-up setup is excluded. Options labels describe underlying bias, not option premium.')
@@ -253,7 +371,7 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool) ->
     export["time"] = pd.to_datetime(export["time"], unit="ms", utc=True)
     st.download_button("Candle CSV", export.to_csv(index=False), file_name="maxtrade_candles.csv",
                         mime="text/csv", icon=":material/download:", key="chart_csv")
-    if product == "Options":
+    if product == "Options" and interval in ('1h', '4h'):
         render_option_chain(pair, 'chart')
         st.subheader("Contract watchlist")
         st.caption("CALL/PUT bias is underlying direction only. WATCH labels also require current contract liquidity and delta filters; not premium entry/exit signals.")
@@ -263,7 +381,7 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool) ->
             st.markdown('<div class="signal-grid">' + ''.join(signal_card(row) for row in snapshot.get("contracts", [])) + '</div>',
                         unsafe_allow_html=True)
             st.caption(f"Contract quotes fetched {snapshot['contracts_fetched']} · refreshed at most once per minute automatically. Options may lose their full premium.")
-    else:
+    elif product != 'Options' and interval in ('1h', '4h'):
         render_replay(snapshot, interval, product)
     with st.expander("Research rules"):
         st.write("Chart indicators and setup markers use completed candles. Technical arrows are separate from saved paper fills. Drawings are temporary browser annotations, not orders or saved trading instructions.")

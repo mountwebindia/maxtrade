@@ -124,6 +124,10 @@ st.markdown(
 )
 require_login()
 
+if st.query_params.get('view') == 'chart':
+    render_chart_page(workspace=True)
+    st.stop()
+
 def select_page(page: str) -> None:
     st.session_state["navigation"] = page
 

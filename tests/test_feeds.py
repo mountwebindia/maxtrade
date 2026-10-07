@@ -8,6 +8,41 @@ from maxtrade.scanner import scan_futures, scan_spot
 
 
 class CandleTests(unittest.TestCase):
+    def test_custom_source_intervals_have_complete_history_and_preserve_gaps(self):
+        from maxtrade.coindcx import INTERVAL_MS
+        for interval, source in [('2m', '1m'), ('3m', '1m'), ('45m', '15m'), ('120m', '1h'), ('180m', '1h')]:
+            duration = INTERVAL_MS[source]
+            now_ms = duration * 499
+            bars = [{'time': index * duration, 'open': 100, 'high': 102, 'low': 99,
+                     'close': 101, 'volume': 10} for index in range(499)]
+            client = CoinDCXClient()
+            with self.subTest(interval=interval), patch('maxtrade.coindcx.time.time', return_value=now_ms / 1000), patch.object(client, '_get', return_value=bars):
+                result = client.spot_candles('B-BTC_USDT', interval)
+                self.assertGreaterEqual(len(result), 50)
+                self.assertTrue(all(result[index]['time'] - result[index - 1]['time'] == INTERVAL_MS[interval]
+                                    for index in range(1, len(result))))
+            client.session.close()
+
+    def test_minute_intervals_use_real_feed_resolutions_and_closed_bars(self):
+        from maxtrade.coindcx import INTERVAL_MS
+        for interval in ('1m', '5m', '15m', '30m', '1h', '4h', '1d'):
+            duration = INTERVAL_MS[interval]
+            with self.subTest(interval=interval):
+                rows = [{'time': index * duration} for index in range(4)]
+                self.assertEqual(len(normalize_candles(rows, interval, now_ms=duration * 3 + duration // 2)), 3)
+                client = CoinDCXClient()
+                with patch.object(client, '_get', return_value=[]) as request:
+                    client.futures_candles('B-BTC_USDT', interval)
+                    self.assertEqual(request.call_args.args[1]['resolution'], '1D' if interval == '1d' else str(duration // 60_000))
+                client.session.close()
+
+    def test_minute_aggregation_never_fills_missing_source_bars(self):
+        from maxtrade.coindcx import aggregate_candles
+        bars = [{'time': index * 60000, 'open': 100, 'high': 102, 'low': 99,
+                 'close': 101, 'volume': 10} for index in range(11)]
+        self.assertEqual(len(aggregate_candles(bars, '1m', '5m')), 2)
+        self.assertEqual(len(aggregate_candles(bars[:2] + bars[3:], '1m', '5m')), 1)
+
     def test_live_display_retains_forming_candle_but_rejects_future_bars(self):
         rows = [{"time": index * 3_600_000} for index in range(4)]
         result = normalize_candles(rows, "1h", now_ms=9_000_000, include_open=True)

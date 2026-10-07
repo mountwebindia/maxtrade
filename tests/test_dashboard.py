@@ -9,6 +9,54 @@ from maxtrade.settings import azure_openai_config, credential_status
 
 
 class DashboardTests(unittest.TestCase):
+    def test_chart_only_controls_preserve_selection_and_hide_dashboard_research(self):
+        def render():
+            from unittest.mock import patch
+            from maxtrade.chart_page import render_chart_page
+            with patch('maxtrade.chart_page.render_chart_snapshot'), patch('maxtrade.chart_page.render_market_research') as research:
+                render_chart_page(workspace=True)
+                research.assert_not_called()
+        app = AppTest.from_function(render)
+        app.query_params.update({'view': 'chart', 'product': 'Options', 'pair': 'ETH', 'interval': '15m'})
+        app.run(timeout=15)
+        self.assertFalse(app.exception)
+        self.assertEqual(app.selectbox(key='chart_interval').value, '15m')
+        self.assertEqual(app.selectbox(key='chart_underlying').value, 'ETH')
+        self.assertEqual(app.expander[0].label, 'Chart settings')
+
+    def test_options_minute_workspace_uses_underlying_feed_without_research(self):
+        def render():
+            import time
+            from unittest.mock import patch
+            import streamlit as st
+            from maxtrade.chart_page import render_chart_snapshot
+            duration = 300000
+            last = int(time.time() * 1000) // duration * duration
+            bars = [{'time': last - (80 - index) * duration, 'open': 100, 'high': 102,
+                     'low': 99, 'close': 101, 'volume': 10} for index in range(81)]
+            st.session_state['chart_paper_fills'] = False
+            with patch('maxtrade.chart_page.require_chart_login'), patch('maxtrade.chart_page.DeribitClient') as client:
+                client.return_value.underlying_candles.return_value = bars
+                render_chart_snapshot('Options', '5m', 'BTC', False, workspace=True)
+                client.return_value.underlying_candles.assert_called_once_with('BTC', '5m', include_open=True)
+                client.return_value.futures_candles.assert_not_called()
+                client.return_value.instruments.assert_not_called()
+        app = AppTest.from_function(render).run(timeout=15)
+        self.assertFalse(app.exception)
+        self.assertFalse(app.error)
+        self.assertFalse(any(item.value == 'Trade decision' for item in app.subheader))
+
+    def test_chart_workspace_url_contains_only_selection_and_layout(self):
+        import json
+        from urllib.parse import parse_qs
+        from maxtrade.chart_page import chart_workspace_url
+        preferences = {'chart_style': 'Candles', 'chart_indicators': ['EMA 20']}
+        query = parse_qs(chart_workspace_url('Spot', 'B-BTC_USDT', '5m', preferences)[1:])
+        self.assertEqual(query['view'], ['chart'])
+        self.assertEqual(query['interval'], ['5m'])
+        self.assertEqual(json.loads(query['layout'][0]), preferences)
+        self.assertEqual(set(query), {'view', 'product', 'pair', 'interval', 'layout'})
+
     def test_worker_diagnostics_distinguishes_heartbeat_health(self):
         def render(status):
             from datetime import datetime, timezone

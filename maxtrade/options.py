@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 import requests
 
-from maxtrade.coindcx import aggregate_four_hour_candles, normalize_candles
+from maxtrade.coindcx import INTERVAL_MS, aggregate_candles, aggregate_four_hour_candles, normalize_candles
 from maxtrade.signals import analyze_candles
 
 
@@ -51,12 +51,21 @@ class DeribitClient:
         return result
 
     def underlying_candles(self, currency: str, interval: str,
-                           include_open: bool = False) -> list[dict[str, Any]]:
+                           include_open: bool = False, count: int = 130) -> list[dict[str, Any]]:
         now_ms = int(time() * 1000)
-        count = 500 if interval == "4h" else 130
+        if interval in ('2m', '3m', '45m', '120m', '180m'):
+            source = next(value for value in ('1h', '15m', '5m', '1m')
+                          if INTERVAL_MS[interval] % INTERVAL_MS[value] == 0)
+            ratio = INTERVAL_MS[interval] // INTERVAL_MS[source]
+            candles = self.underlying_candles(currency, source, include_open, count=min(120 * ratio + ratio, 500))
+            bars = aggregate_candles(candles, source, interval, now_ms if include_open else None)
+            return normalize_candles(bars, interval, now_ms=now_ms, include_open=include_open)
+        count = 500 if interval == "4h" else count
+        source_interval = "1h" if interval == "4h" else interval
+        resolution = "1D" if source_interval == "1d" else str(INTERVAL_MS[source_interval] // 60_000)
         payload = self._get(
             "get_tradingview_chart_data", instrument_name=f"{currency}-PERPETUAL",
-            resolution="60", start_timestamp=now_ms - count * 3600000, end_timestamp=now_ms,
+            resolution=resolution, start_timestamp=now_ms - count * INTERVAL_MS[source_interval], end_timestamp=now_ms,
         )
         fields = ["ticks", "open", "high", "low", "close", "volume"]
         if not isinstance(payload, dict) or payload.get("status") != "ok":
@@ -65,7 +74,7 @@ class DeribitClient:
         if not all(isinstance(values, list) for values in arrays) or len({len(values) for values in arrays}) != 1:
             raise ValueError("Invalid underlying candle arrays")
         candles = [dict(zip(["time", *fields[1:]], values)) for values in zip(*arrays)]
-        hourly = normalize_candles(candles, "1h", count=count, now_ms=now_ms, include_open=include_open)
+        hourly = normalize_candles(candles, source_interval, count=count, now_ms=now_ms, include_open=include_open)
         if interval == "4h":
             return normalize_candles(aggregate_four_hour_candles(hourly, now_ms=now_ms if include_open else None),
                                      "4h", now_ms=now_ms, include_open=include_open)
