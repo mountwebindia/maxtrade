@@ -12,6 +12,14 @@ For GitHub publishing, live-link hosting, and Hostinger shared-hosting limitatio
 
 Research dashboard for CoinDCX spot/futures signals and Deribit BTC/ETH options watchlists. Uses public market data only and never places orders.
 
+## Prediction quality monitoring
+
+Daily accuracy now separates target hits from net modeled outcomes. New resolved and expired signals include 10 bps fees and 5 bps adverse slippage per side; expiry uses the final completed close of the 24-hour horizon. Funding and borrowing are excluded. Legacy terminal records remain immutable and are excluded from net statistics when cost metadata is absent. Overlapping signals are not a portfolio return series.
+
+New scanner snapshots archive `trend-breakout-volume-shadow-v1` evidence: 20-bar directional efficiency, ATR percentage, EMA regime, prior-range breakout, relative volume and completed higher-timeframe agreement (1h/4h or 4h/daily). CHOP below 0.25 efficiency, ATR above 5%, absent breakout, volume ratio below 1.2 and unavailable/conflicting confirmation block the **shadow candidate**, not the existing baseline or PAPER policy. Thresholds are frozen research hypotheses, not optimized or validated improvements. Reported volume is not order-book liquidity.
+
+The Daily accuracy section displays purged 30-day forward folds comparing baseline and candidate signal outcomes, excluding overlap per market/timeframe. Confidence is a prior comparable net-win frequency with a Wilson 95% interval, requiring 30 non-overlapping samples of the same market, timeframe, direction, regime, candidate decision and version. Both the full horizon and recorded outcome evaluation must predate the decision. Insufficient evidence stays unavailable. Brier scores evaluate estimates frozen at fold start. This is forward shadow monitoring, not trained-model walk-forward certification, guaranteed accuracy or automatic policy promotion. New data must accumulate; older unversioned scans are not retroactively labeled.
+
 ## Run locally
 
 ```sh

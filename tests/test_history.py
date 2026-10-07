@@ -7,6 +7,65 @@ from maxtrade.accuracy import evaluate_prediction, daily_accuracy, update_outcom
 
 
 class HistoryTests(unittest.TestCase):
+    def test_confidence_requires_prior_available_nonoverlapping_comparable_outcomes(self):
+        import json
+        from maxtrade.quality import prior_confidence, forward_validation, QUALITY_VERSION, HORIZON_MS
+        current = {'product': 'Spot', 'pair': 'BTC', 'interval': '1h', 'action': 'LONG',
+                   'quality': {'version': QUALITY_VERSION, 'regime': 'UPTREND', 'candidate_action': 'LONG'}}
+        records = [dict(current, start_ms=index * HORIZON_MS, status='WIN', result_json=json.dumps({
+            'cost_model': 'fixed-notional-v1', 'net_return_pct': 1,
+            'evaluated_at_ms': (index + 1) * HORIZON_MS})) for index in range(31)]
+        self.assertFalse(prior_confidence(records, current, 29 * HORIZON_MS)['available'])
+        estimate = prior_confidence(records, current, 30 * HORIZON_MS)
+        self.assertEqual(estimate['samples'], 30)
+        self.assertTrue(estimate['available'])
+        self.assertLess(estimate['wilson_95_low'], 1)
+        self.assertAlmostEqual(estimate['wilson_95_high'], 1)
+        overlapping = dict(records[0], start_ms=HORIZON_MS // 2)
+        different_market = dict(records[0], pair='ETH')
+        self.assertEqual(prior_confidence(records + [overlapping, different_market], current, 30 * HORIZON_MS)['samples'], 30)
+        delayed = [dict(record, result_json=json.dumps({'cost_model': 'fixed-notional-v1',
+                    'net_return_pct': 1, 'evaluated_at_ms': 100 * HORIZON_MS})) for record in records]
+        self.assertEqual(prior_confidence(delayed, current, 30 * HORIZON_MS)['samples'], 0)
+        folds = forward_validation(records)
+        self.assertEqual(folds[0]['Calibration samples'], 0)
+        self.assertEqual(folds[1]['Calibration samples'], 1)
+        self.assertEqual(folds[1]['Brier score'], 0)
+        crossing = dict(records[0], start_ms=30 * HORIZON_MS - HORIZON_MS // 2)
+        self.assertEqual(sum(row['Baseline samples'] for row in forward_validation(records + [crossing])), 31)
+
+    def test_prediction_evidence_round_trip_preserves_original_snapshot(self):
+        history = ScanHistory(self.path)
+        from datetime import datetime
+        candle = int(datetime.fromisoformat('2026-10-05T17:00:00+00:00').timestamp() * 1000)
+        evidence = {'version': 'test', 'regime': 'CHOP', 'candidate_action': 'NO TRADE'}
+        history.save('Spot', '1h', 1, '2026-10-05T18:01:00+00:00', [{'Pair': 'BTC',
+                     'Signal': 'LONG', 'Signal candle time': candle, 'Stop': 90, 'Target': 120, 'Quality': evidence}])
+        prediction = ScanHistory(self.path).predictions()[0]
+        self.assertEqual(prediction['quality'], evidence)
+        self.assertEqual(prediction['interval'], '1h')
+
+    def test_net_outcomes_include_costs_expiry_and_keep_legacy_unscored(self):
+        import json
+        from maxtrade.accuracy import modeled_return
+        for long in (True, False):
+            result = modeled_return(100, 100, long)
+            self.assertLess(result['net_return_pct'], -0.29)
+            self.assertEqual(result['gross_return_pct'], 0)
+        hour = 3600000
+        bars = [{'time': index * hour, 'open': 100, 'close': 100, 'low': 95, 'high': 105}
+                for index in range(24)]
+        expired = evaluate_prediction({'start_ms': 0, 'action': 'LONG', 'stop': 90, 'target': 120}, bars, 24 * hour)
+        self.assertEqual(expired['status'], 'EXPIRED')
+        self.assertEqual(expired['exit'], 100)
+        self.assertLess(expired['net_return_pct'], 0)
+        records = [{'created_at': '2026-10-07', 'status': 'EXPIRED', 'result_json': json.dumps(expired)},
+                   {'created_at': '2026-10-07', 'status': 'WIN', 'result_json': None}]
+        summary = daily_accuracy(records)[0]
+        self.assertEqual(summary['Net samples'], 1)
+        self.assertEqual(summary['Net win rate %'], 0)
+        self.assertLess(summary['Mean net outcome %'], 0)
+
     def test_rejection_summary_excludes_manual_and_approved_and_deduplicates_reasons(self):
         history = ScanHistory(self.path)
         report = {'created_at': '2026-10-07T01:00:00+00:00', 'symbol': 'B-BTC_USDT',

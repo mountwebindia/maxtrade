@@ -12,6 +12,34 @@ def make_candles(closes: list[float]) -> list[dict[str, float]]:
 
 
 class SignalTests(unittest.TestCase):
+    def test_shadow_higher_confirmation_excludes_future_bars(self):
+        from maxtrade.quality import shadow_quality
+        candles = make_candles([100 + index * 0.1 + (index % 4) * 0.5 for index in range(280)])
+        for index, candle in enumerate(candles):
+            candle['time'] = index * 3600000
+        higher = make_candles([100 + index * 0.1 + (index % 4) * 0.5 for index in range(70)])
+        for index, candle in enumerate(higher):
+            candle['time'] = index * 4 * 3600000
+        quality = shadow_quality(candles, '1h', higher=higher, higher_interval='4h')
+        self.assertEqual(quality['higher_action'], 'LONG')
+        future = {'time': 280 * 3600000, 'open': 1, 'close': 1, 'high': 2, 'low': 0.5, 'volume': 10}
+        self.assertEqual(quality, shadow_quality(candles, '1h', higher=higher + [future], higher_interval='4h'))
+        self.assertIn('No completed-close prior-20-bar breakout', quality['blockers'])
+        self.assertIn('Relative volume below 1.2 or unavailable', quality['blockers'])
+
+    def test_shadow_quality_blocks_chop_and_missing_confirmation(self):
+        from maxtrade.quality import shadow_quality
+        candles = make_candles([100] * 80)
+        for index, candle in enumerate(candles):
+            candle['time'] = index * 3600000
+        quality = shadow_quality(candles, '1h')
+        self.assertEqual(quality['regime'], 'CHOP')
+        self.assertEqual(quality['candidate_action'], 'NO TRADE')
+        self.assertIn('Higher-timeframe setup missing or conflicting', quality['blockers'])
+        candles[-1]['time'] += 3600000
+        with self.assertRaisesRegex(ValueError, 'contiguous'):
+            shadow_quality(candles, '1h')
+
     def test_chart_matches_scanner_without_future_candles(self):
         candles = make_candles([100 + index * .1 + (index % 4) * .5 for index in range(90)])
         for index, candle in enumerate(candles):

@@ -142,7 +142,17 @@ class ScanHistory:
 
     def predictions(self) -> list[dict[str, Any]]:
         with closing(self._connect()) as connection:
-            return [dict(row) for row in connection.execute("SELECT * FROM predictions ORDER BY created_at DESC")]
+            rows = connection.execute('''SELECT p.*, s.interval, s.results_json FROM predictions p
+                JOIN scans s ON s.id=p.scan_id ORDER BY p.created_at DESC''').fetchall()
+        records = []
+        for row in rows:
+            record = dict(row)
+            results = json.loads(record.pop('results_json'))
+            evidence = next((result for result in results if result.get('Pair') == record['pair']
+                             and result.get('Signal') == record['action']), {})
+            record['quality'] = evidence.get('Quality')
+            records.append(record)
+        return records
 
     def claim_notifications(self, destination: str, now: datetime, limit: int = 20) -> list[dict[str, Any]]:
         from datetime import timedelta

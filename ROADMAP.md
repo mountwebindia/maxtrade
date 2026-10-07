@@ -1,5 +1,11 @@
 # Remaining work
 
+## Prediction quality increment
+- Implemented cost-aware forward signal outcomes, expiry closes and daily net sample/win/mean statistics; old terminal results remain immutable.
+- Implemented versioned scanner shadow regime vetoes, prior-range breakout, relative-volume and completed higher-timeframe confirmations, archived separately from unchanged baseline/PAPER authorization.
+- Implemented purged 30-day forward comparison folds and prior-only empirical confidence with minimum sample size, non-overlap, outcome-availability timestamps, Wilson intervals and fold-frozen Brier scoring.
+- Pending: sufficient forward samples, calibration reliability analysis, timestamped historical intraday feature coverage, train/validation/test model fitting and untouched walk-forward certification. Existing hourly gaps and observed historical holdouts remain restrictions. Execution-grade order-book liquidity and independently verified market constraints are not supplied by relative candle volume. No candidate promotion or predictive-improvement claim follows from software tests.
+
 ## Historical learning: ordered implementation gates
 1. Chart evidence: selectable EMA200, Bollinger Bands, UTC-day VWAP, prior-20-bar support/resistance and MACD implemented locally. Completed bars only; warm-ups and incomplete first-day VWAP stay blank. These additions do not change entry policy, predict returns or train an AI model.
 2. Historical ingestion (daily foundation implemented locally): resumable Coinbase Exchange BTC-USD/ETH-USD ingestion preserves raw responses, SHA256, retrieval times and validated candles in a separate research database. Live download for 2016-10-06 inclusive to 2026-10-06 exclusive returned 3,652 daily candles per asset with zero missing buckets. This is Coinbase USD data, not CoinDCX USDT execution history. Ten-year hourly/derived 4h coverage, provider licensing/redistribution review, derivatives, news and on-chain coverage remain unverified gates.

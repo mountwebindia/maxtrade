@@ -14,6 +14,19 @@ from maxtrade.coindcx import CoinDCXClient
 HOUR_MS = 3600000
 
 
+def modeled_return(entry: float, exit_price: float, long: bool) -> dict:
+    fee, slippage = 0.001, 0.0005
+    direction = 1 if long else -1
+    entry_fill = entry * (1 + direction * slippage)
+    exit_fill = exit_price * (1 - direction * slippage)
+    gross = direction * (exit_price / entry - 1) * 100
+    net = (direction * (exit_fill - entry_fill) - fee * (entry_fill + exit_fill)) / entry_fill * 100
+    return {'gross_return_pct': gross, 'net_return_pct': net,
+            'entry_fill': entry_fill, 'exit_fill': exit_fill,
+            'fee_bps_per_side': 10, 'slippage_bps_per_side': 5,
+            'cost_model': 'fixed-notional-v1', 'funding_included': False}
+
+
 def evaluate_prediction(prediction: dict, candles: list[dict], now_ms: int) -> dict:
     start = prediction["start_ms"]
     end = start + 24 * HOUR_MS
@@ -37,10 +50,14 @@ def evaluate_prediction(prediction: dict, candles: list[dict], now_ms: int) -> d
         won = high >= target if long else low <= target
         if stopped or won:
             exit_price = (min(stop, opening) if long else max(stop, opening)) if stopped else target
-            gross = (exit_price / entry - 1) * 100 * (1 if long else -1)
             return {"status": "LOSS" if stopped else "WIN", "entry": entry,
-                    "exit": exit_price, "gross_return_pct": gross,
+                    "exit": exit_price, **modeled_return(entry, exit_price, long),
                     "exit_bar_utc": datetime.fromtimestamp(timestamp / 1000, timezone.utc).isoformat()}
+    if now_ms >= end and entry is not None:
+        exit_price = float(completed[end - HOUR_MS]['close'])
+        return {'status': 'EXPIRED', 'entry': entry, 'exit': exit_price,
+                **modeled_return(entry, exit_price, long),
+                'exit_bar_utc': datetime.fromtimestamp((end - HOUR_MS) / 1000, timezone.utc).isoformat()}
     return {"status": "EXPIRED" if now_ms >= end else "PENDING", "entry": entry}
 
 
@@ -49,15 +66,26 @@ def daily_accuracy(records: list[dict]) -> list[dict]:
     for record in records:
         day = record["created_at"][:10]
         row = days.setdefault(day, {"Date UTC": day, "Predictions": 0, "Wins": 0, "Losses": 0,
-                                   "Expired": 0, "Pending": 0, "Data gaps": 0, "Invalid entries": 0})
+                                   "Expired": 0, "Pending": 0, "Data gaps": 0, "Invalid entries": 0,
+                                   'Net samples': 0, 'Net wins': 0, '_net_total': 0.0})
         row["Predictions"] += 1
         column = {"WIN": "Wins", "LOSS": "Losses", "EXPIRED": "Expired", "PENDING": "Pending",
                   "DATA GAP": "Data gaps", "INVALID ENTRY": "Invalid entries"}[record["status"]]
         row[column] += 1
+        result = json.loads(record.get('result_json') or '{}')
+        net = result.get('net_return_pct')
+        if record['status'] in {'WIN', 'LOSS', 'EXPIRED'} and result.get('cost_model') == 'fixed-notional-v1' and isinstance(net, (int, float)) and not isinstance(net, bool) and isfinite(net):
+            row['Net samples'] += 1
+            row['Net wins'] += int(net > 0)
+            row['_net_total'] += net
     for row in days.values():
         resolved = row["Wins"] + row["Losses"] + row["Expired"]
         row["Scored"] = resolved
         row["Target accuracy %"] = round(row["Wins"] / resolved * 100, 2) if resolved else None
+        samples = row['Net samples']
+        row['Net win rate %'] = round(row['Net wins'] / samples * 100, 2) if samples else None
+        total = row.pop('_net_total')
+        row['Mean net outcome %'] = round(total / samples, 4) if samples else None
     return sorted(days.values(), key=lambda row: row["Date UTC"], reverse=True)
 
 
@@ -72,7 +100,9 @@ def update_outcomes(history, client, now_ms: int) -> list[str]:
             if key not in cache:
                 fetch = client.spot_candles if record["product"] == "Spot" else client.futures_candles
                 cache[key] = fetch(record["pair"], "1h", count=480)
-            history.save_outcome(record["fingerprint"], evaluate_prediction(record, cache[key], now_ms))
+            outcome = evaluate_prediction(record, cache[key], now_ms)
+            outcome['evaluated_at_ms'] = now_ms
+            history.save_outcome(record["fingerprint"], outcome)
         except (requests.RequestException, ValueError, KeyError, TypeError) as error:
             errors.append(f"{record['pair']}: outcome unavailable ({error})")
     return errors
@@ -105,4 +135,25 @@ def render_daily_accuracy(history) -> None:
                 **(json.loads(record["result_json"]) if record["result_json"] else {})}
                for record in records if record["created_at"][:10] == selected_date]
     st.dataframe(details, hide_index=True, width="stretch")
-    st.caption("Gross price outcomes, not executed trades or net profitability. Fees, slippage and funding are excluded. Outcomes update each worker cycle or on request; cloud storage may be lost on restart. A signal's 24-hour evaluation may finish the following day. Small samples do not establish future accuracy.")
+    from maxtrade.quality import forward_validation, prior_confidence
+    st.markdown('#### Shadow quality evaluation')
+    folds = forward_validation(records)
+    if folds:
+        st.dataframe(folds, hide_index=True, width='stretch')
+        st.download_button('Download forward validation CSV', pd.DataFrame(folds).to_csv(index=False).encode(),
+                           file_name='maxtrade-shadow-forward-validation.csv', mime='text/csv', icon=':material/download:')
+    else:
+        st.info('No matured cost-aware versioned shadow samples yet.')
+    confidence_rows = []
+    for record in records:
+        if record['created_at'][:10] != selected_date:
+            continue
+        decision_ms = int(datetime.fromisoformat(record['created_at']).timestamp() * 1000)
+        estimate = prior_confidence(records, record, decision_ms)
+        quality = record.get('quality') or {}
+        confidence_rows.append({'Pair': record['pair'], 'Timeframe': record.get('interval'),
+                                'Regime': quality.get('regime'), 'Candidate': quality.get('candidate_action'),
+                                'Blockers': '; '.join(quality.get('blockers', [])), **estimate})
+    st.dataframe(confidence_rows, hide_index=True, width='stretch')
+    st.caption('Shadow only: no PAPER policy changes. Frozen candidate rules, 30-day forward folds, crossing 24-hour horizons purged, non-overlapping samples per market/timeframe. Means are signal statistics, not portfolio performance. Confidence uses only comparable outcomes whose full horizon ended before the decision; 30 samples minimum and Wilson uncertainty. Brier scores use estimates frozen at fold start. This is forward monitoring, not trained-model walk-forward certification.')
+    st.caption("Modeled signals, not executed trades. New outcomes include 10 bps fees and 5 bps slippage per side on entry notional; funding and borrowing are excluded. Expiry exits use the final 24-hour close. Legacy outcomes without this cost model are excluded from net statistics. Signals can overlap, so these averages are not portfolio returns or drawdown. Outcomes update each worker cycle or on request; cloud storage may be lost on restart. Small samples do not establish future accuracy.")

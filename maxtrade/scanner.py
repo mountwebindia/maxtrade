@@ -6,9 +6,24 @@ from requests import RequestException
 
 from maxtrade.coindcx import CoinDCXClient
 from maxtrade.signals import analyze_candles
+from maxtrade.quality import shadow_quality, QUALITY_VERSION
 
 
 QUOTE_CURRENCIES = {"INR", "USDT", "USDC"}
+
+
+def _quality(client, pair: str, interval: str, candles: list[dict], futures: bool) -> dict:
+    higher_interval = {'1h': '4h', '4h': '1d'}.get(interval)
+    fetch = client.futures_candles if futures else client.spot_candles
+    try:
+        local = shadow_quality(candles, interval, futures)
+        if not higher_interval or local['baseline_action'] == 'NO TRADE':
+            return local
+        higher = fetch(pair, higher_interval) if higher_interval else None
+        return shadow_quality(candles, interval, futures, higher, higher_interval)
+    except (RequestException, KeyError, TypeError, ValueError) as error:
+        return {'version': QUALITY_VERSION, 'interval': interval, 'mode': 'SHADOW ONLY',
+                'candidate_action': 'NO TRADE', 'blockers': [f'Shadow evidence unavailable: {error}']}
 
 
 def _volume(ticker: dict[str, Any]) -> float:
@@ -58,6 +73,7 @@ def scan_spot(client: CoinDCXClient, interval: str, limit: int,
                     "Stop": signal.stop,
                     "Target": signal.target,
                     "Reason": signal.reason,
+                    "Quality": _quality(client, market["pair"], interval, candles, False),
                 }
             )
         except (RequestException, KeyError, TypeError, ValueError) as error:
@@ -112,6 +128,7 @@ def scan_futures(client: CoinDCXClient, interval: str, limit: int,
                     "Stop": signal.stop,
                     "Target": signal.target,
                     "Reason": signal.reason,
+                    "Quality": _quality(client, pair, interval, candles, True),
                 }
             )
         except (RequestException, KeyError, TypeError, ValueError) as error:
