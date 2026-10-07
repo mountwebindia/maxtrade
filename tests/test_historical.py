@@ -6,11 +6,37 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock
 
-from maxtrade.historical import four_hour_coverage, ingest, parse_candles, quality_report
+from maxtrade.historical import audit_gaps, four_hour_coverage, ingest, parse_candles, quality_report
 from maxtrade.historical_features import causal_features, evaluate, forward_outcomes, historical_context, load_dataset
 
 
 class HistoricalTests(unittest.TestCase):
+    def test_gap_audit_is_fresh_and_preserves_original_history(self):
+        session = Mock()
+        row = [0, 99, 102, 100, 101, 10]
+        session.get.return_value = Mock(status_code=200, content=json.dumps([row]).encode())
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "history.sqlite3"
+            original = ingest("BTC-USD", "1h", 0, 7200, database, session)
+            session.get.return_value = Mock(status_code=200, content=json.dumps([row, [3600, 99, 102, 100, 101, 10]]).encode())
+            audit = audit_gaps("BTC-USD", "1h", 0, 7200, database, session)
+            self.assertEqual(audit["status"], "RECOVERABLE")
+            self.assertEqual(len(audit["checks"][0]["recovered_bars"]), 1)
+            self.assertFalse(audit["original_dataset_modified"])
+            self.assertEqual(ingest("BTC-USD", "1h", 0, 7200, database, session)["pages"], original["pages"])
+            session.get.return_value = Mock(status_code=200, content=json.dumps([row]).encode())
+            self.assertEqual(audit_gaps("BTC-USD", "1h", 0, 7200, database, session)["status"], "GAPS_REMAIN")
+            revised = [0, 99, 102, 100, 100, 10]
+            session.get.return_value = Mock(status_code=200, content=json.dumps([revised]).encode())
+            self.assertEqual(audit_gaps("BTC-USD", "1h", 0, 7200, database, session)["status"], "REVISIONS_DETECTED")
+            self.assertEqual(session.get.call_count, 4)
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(connection.execute("SELECT count(*) FROM historical_candles").fetchone()[0], 1)
+                self.assertEqual(connection.execute("SELECT count(*) FROM historical_gap_audits").fetchone()[0], 3)
+                connection.execute("UPDATE historical_pages SET raw=?", (b"[]",))
+            with self.assertRaisesRegex(ValueError, "checksum"):
+                audit_gaps("BTC-USD", "1h", 0, 7200, database, session)
+
     def test_shadow_context_rejects_future_retrieval_and_staleness(self):
         now = datetime.now(timezone.utc)
         end = int(now.timestamp()) // 86400 * 86400

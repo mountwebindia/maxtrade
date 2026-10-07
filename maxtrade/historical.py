@@ -168,6 +168,71 @@ def ingest(product: str, interval: str, start: int, end: int, database: Path,
             client.close()
 
 
+def audit_gaps(product: str, interval: str, start: int, end: int, database: Path,
+               session: requests.Session | None = None) -> dict[str, Any]:
+    duration = GRANULARITIES[interval]
+    with sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True) as connection:
+        saved = connection.execute(
+            "SELECT report FROM historical_reports WHERE product=? AND interval=? AND start=? AND end=?",
+            (product, interval, start, end)).fetchone()
+        if not saved:
+            raise ValueError("No saved ingestion report for gap audit")
+        original = json.loads(saved[0])
+        bars = []
+        for page in original["pages"]:
+            cached = connection.execute(
+                "SELECT raw, sha256 FROM historical_pages WHERE product=? AND interval=? AND start=? AND end=?",
+                (product, interval, page["start"], page["end"])).fetchone()
+            if not cached or hashlib.sha256(cached[0]).hexdigest() != cached[1] or cached[1] != page["sha256"]:
+                raise ValueError("Historical raw checksum mismatch")
+            bars.extend(parse_candles(json.loads(cached[0]), page["start"], page["end"], duration))
+    quality = quality_report(bars, start, end, duration)
+    gaps = quality["missing_ranges_seconds"]
+    if len(gaps) > 20 or any((gap_end - gap_start) // duration > 298 for gap_start, gap_end in gaps):
+        raise ValueError("Gap audit exceeds bounded request budget")
+    known = {bar["time"]: bar for bar in bars}
+    own_session = session is None
+    client = session if session is not None else requests.Session()
+    checks = []
+    try:
+        for gap_start, gap_end in gaps:
+            request_start, request_end = max(start, gap_start - duration), min(end, gap_end + duration)
+            response = client.get(f"{ROOT}/products/{product}/candles", params={
+                "granularity": duration,
+                "start": datetime.fromtimestamp(request_start, timezone.utc).isoformat(),
+                "end": datetime.fromtimestamp(request_end, timezone.utc).isoformat()},
+                timeout=20, allow_redirects=False)
+            if response.status_code != 200:
+                raise ValueError(f"Gap audit provider failed (HTTP {response.status_code})")
+            raw = response.content
+            if len(raw) > 200000:
+                raise ValueError("Historical response exceeds size limit")
+            fresh = parse_candles(json.loads(raw), request_start, request_end, duration)
+            recovered = [bar for bar in fresh if gap_start * 1000 <= bar["time"] < gap_end * 1000]
+            revisions = [bar["time"] for bar in fresh if bar["time"] in known and known[bar["time"]] != bar]
+            checks.append({"start": request_start, "end": request_end, "gap": [gap_start, gap_end],
+                           "retrieved": datetime.now(timezone.utc).isoformat(),
+                           "sha256": hashlib.sha256(raw).hexdigest(), "raw": raw.decode("utf-8"),
+                           "recovered_bars": recovered, "revised_overlap_times_ms": revisions,
+                           "remaining_missing_bars": (gap_end - gap_start) // duration - len(recovered)})
+        report = {"version": "gap-audit-v1", "product": product, "interval": interval,
+                  "start": start, "end": end, "original_quality": quality, "checks": checks,
+                  "generated": datetime.now(timezone.utc).isoformat(), "execution_enabled": False,
+                  "original_dataset_modified": False,
+                  "status": "REVISIONS_DETECTED" if any(check["revised_overlap_times_ms"] for check in checks)
+                  else "GAPS_REMAIN" if any(check["remaining_missing_bars"] for check in checks)
+                  else "RECOVERABLE" if checks else "NO_GAPS"}
+        encoded = json.dumps(report, allow_nan=False)
+        with sqlite3.connect(database) as connection:
+            connection.execute("CREATE TABLE IF NOT EXISTS historical_gap_audits (id TEXT PRIMARY KEY, report TEXT NOT NULL)")
+            connection.execute("INSERT OR IGNORE INTO historical_gap_audits VALUES (?, ?)",
+                               (hashlib.sha256(encoded.encode()).hexdigest(), encoded))
+        return report
+    finally:
+        if own_session:
+            client.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Bounded historical research ingestion; no trades or AI calls")
     parser.add_argument("--product", choices=["BTC-USD", "ETH-USD"], required=True)
@@ -175,10 +240,12 @@ def main() -> None:
     parser.add_argument("--start", required=True, help="UTC date YYYY-MM-DD, inclusive")
     parser.add_argument("--end", required=True, help="UTC date YYYY-MM-DD, exclusive; completed bars only")
     parser.add_argument("--database", type=Path, default=Path("data/historical.sqlite3"))
+    parser.add_argument("--audit-gaps", action="store_true", help="Fresh bounded gap checks; original history is never overwritten")
     arguments = parser.parse_args()
     start, end = [int(datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp())
                   for value in (arguments.start, arguments.end)]
-    print(json.dumps(ingest(arguments.product, arguments.interval, start, end, arguments.database), indent=2))
+    operation = audit_gaps if arguments.audit_gaps else ingest
+    print(json.dumps(operation(arguments.product, arguments.interval, start, end, arguments.database), indent=2))
 
 
 if __name__ == "__main__":

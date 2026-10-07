@@ -29,6 +29,8 @@
 - One-shot research/reconciliation worker, 15-minute slot deduplication, saved internal alerts and archive viewer. External scheduling is opt-in and not activated on Streamlit Cloud.
 
 ## Next: strategy evaluation
+Fresh gap audits are implemented with preserved raw provenance and no original-dataset overwrite. The 2026-10-07 Coinbase recheck recovered zero missing hours for BTC/ETH and found no overlapping revisions. Full-range hourly-policy certification remains blocked; next investigate independent venue history or specify and test complete-segment warm-up/reset and open-position-at-gap handling before evaluating segmented data. Other venues must remain separately labelled, not silently spliced into Coinbase history.
+
 ### Autonomous paper release
 - Implemented persisted Start/Pause automation, automatic worker submissions without human review, deterministic vetoes and reconciliation-failure entry blocking. Real orders remain disabled.
 - Added complete closed-ledger net win rate, daily results/CSV, realized drawdown and profit factor. Signal accuracy remains separate.

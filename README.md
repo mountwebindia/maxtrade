@@ -92,6 +92,10 @@ Reports are saved separately from scans and downloadable as JSON. History includ
 
 ## Paper simulation
 
+The chart's Trade decision panel separates completed-candle LONG/SHORT setups from paper eligibility. It shows research entry/stop/target only for fresh candidates, account gates and worker heartbeat above the candles. Stale candles or missing matching full research remain NO TRADE; technical direction alone never authorizes a fill. Settings shows the latest saved autonomous decisions and their blockers.
+
+The supervised worker continues public-data research and existing-position reconciliation if private integration configuration is missing or invalid, but explicitly blocks all new entries. Azure-assisted mode still requires a successful CLEAR review; missing keys are not bypassed. A running process without a recent completed-cycle heartbeat is not evidence of healthy trading automation.
+
 Settings includes a paper account with a default-on kill switch. Only BTC/ETH USDT spot BUY entries are supported. Fresh unanimous LONG evidence, manual news/event review, available account state and risk approval are required to queue an entry. The reviewed snapshot authorizes only the immediately next hourly open; it is not revalidated as a fresh recommendation at fill. Completed hourly bars reconstruct simulated fills, with 10 bps fees and 5 bps slippage per side, stop-first exits, 1% planned risk, 25% allocation cap, one pending/open position globally and a 3% realized daily-loss veto. Gaps can exceed planned risk. Equity excludes unrealized P&L; capital is fixed after the first decision. Kill switch cancels pending entries, not open positions.
 
 Positions and their source snapshots persist in SQLite, with duplicate-entry prevention and CSV downloads. The worker queues eligible simulated entries only when autonomous paper policy is enabled; it never sends exchange orders. Completed cycles save a heartbeat and verified daily online backup. Unattended operation requires an awake Mac or a managed persistent backend. Cloud-local SQLite and same-disk backups can disappear on redeployment. Futures/options paper fills remain excluded. See [DEPLOYMENT.md](DEPLOYMENT.md).
@@ -109,6 +113,18 @@ Signals > Asset group > Gold-backed tokens filters active CoinDCX PAXG/XAUT spot
 History > Daily accuracy records new LONG/SHORT scan predictions with their market pair and completed signal-candle timestamp. Repeated product/pair/timeframe/action signals from the same candle count once. Older snapshots lacking provenance and options/NO TRADE rows are not scored. Entries use the first timeframe boundary strictly after the scan was saved, avoiding retrospective fills. The next 24 hours are checked with completed hourly OHLC bars; a stop/target tie counts as a loss, stop gaps use the adverse opening price, and an entry already outside stop/target is invalid.
 
 Target accuracy is wins divided by wins + losses + 24-hour expiries. Expiries count as misses; pending, data gaps and invalid entries remain separately visible and unscored. Daily grouping uses UTC scan date, not closing date. Per-prediction outcomes and daily CSV are available. Update outcomes fetches public candles only on request, with a recent 480-hour lookback; older missing history cannot be reconstructed with this update path. Final outcomes are immutable, but providers may revise historical bars before scoring. This is a gross-price scenario evaluation, not actual fills, fee-adjusted profitability, option-premium accuracy, or certification. Cloud-local records may disappear on restart; no background scheduling or durable storage is activated.
+
+### Fresh Historical Gap Audit
+
+Cached ingestion does not refresh missing buckets. Recheck a saved dataset with bounded fresh requests:
+
+```sh
+.venv/bin/python -m maxtrade.historical --product BTC-USD --interval 1h --start 2025-10-06 --end 2026-10-06 --audit-gaps
+```
+
+Repeat with `ETH-USD` for Ethereum. The audit verifies original raw checksums, requests gap windows with adjacent candles, and saves fresh raw responses, retrieval times, SHA256, recovered bars and overlapping provider revisions in `historical_gap_audits`. At most 20 requests are allowed, each covering at most 300 hourly/daily buckets. It never fills or overwrites the original dataset and cannot approve trades.
+
+The 2026-10-07 fresh checks recovered zero of the 10 missing hours per asset; adjacent candles were unchanged. Both assets still have two five-hour gaps and incomplete derived 4h coverage. Full-range hourly-policy certification remains blocked. Independent source verification or an explicitly designed segment/reset policy is required; interpolation is not execution evidence.
 
 ## Verification
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import sqlite3
 
 import requests
 import pandas as pd
@@ -65,6 +66,69 @@ def render_chart_page() -> None:
     render_market_research(product, pair)
 
 
+def render_trade_status(product: str, pair: str, latest, stale: bool) -> None:
+    from maxtrade.paper import PaperLedger, coordinate
+    from maxtrade.history import ScanHistory
+
+    st.subheader("Trade decision")
+    candidate = not stale and latest.action in {"LONG", "SHORT"}
+    status = f"{latest.action} SETUP" if candidate else "WAIT / NO TRADE"
+    if candidate:
+        st.info(f"Technical: {status} | {latest.reason}")
+    else:
+        st.warning(f"Technical: {status} | " + ("Closed candles are stale." if stale else latest.reason))
+    if candidate:
+        columns = st.columns(3)
+        for column, label, value in zip(columns, ("Research entry", "Stop", "Target"),
+                                        (latest.entry, latest.stop, latest.target)):
+            column.metric(label, display_number(value))
+    st.caption("Completed-candle setup only; not permission to enter. Paper fills require fresh 1h/4h agreement and all risk checks.")
+    try:
+        ledger = PaperLedger()
+        now = datetime.now(timezone.utc)
+        account = ledger.account(now)
+        enabled = ledger.automation_enabled()
+        st.write(f"Paper automation: {'ENABLED' if enabled else 'PAUSED'} | "
+                 f"Kill switch: {'ON' if account['kill_switch'] else 'OFF'} | "
+                 f"Position slot: {'OCCUPIED' if account['occupied'] else 'FREE'}")
+        history = ScanHistory(ledger.path)
+        report = st.session_state.get("research_report")
+        if not report or (report.get("product"), report.get("symbol")) != (product, pair):
+            report = next((saved['report'] for saved in history.recent_research()
+                           if (saved['report'].get('product'), saved['report'].get('symbol')) == (product, pair)
+                           and saved['report'].get('paper_policy') == 'autonomous-paper-v1'), None)
+        if report and (report.get("product"), report.get("symbol")) == (product, pair):
+            evidence = dict(report, ai_mode=ledger.ai_mode())
+            risk = coordinate(evidence, now, account=account, autonomous=enabled)
+            blockers = list(risk["blockers"])
+            if report.get('paper_policy') == 'autonomous-paper-v1':
+                blockers.extend(report.get('blockers', []))
+            if stale:
+                blockers.append("Chart candles are stale")
+            if not enabled:
+                blockers.append("Paper automation paused")
+            blockers = list(dict.fromkeys(blockers))
+            st.write(f"Paper: {'BUY ELIGIBLE' if not blockers else 'NO TRADE'}")
+            st.caption(f"Full assessment: {report['created_at']} | expires {report['expires_at']}")
+            if report['evidence']:
+                st.dataframe([{'Timeframe': item['interval'], 'Direction': item['action'],
+                               'Candle closed': item['event_time'], 'Expires': item['expires_at']}
+                              for item in report['evidence']], hide_index=True, width='stretch')
+            for blocker in blockers:
+                st.write(f"- {blocker}")
+        else:
+            st.write("Paper: NO TRADE | No matching full research assessment. Run market research below.")
+        heartbeat = history.worker_status()
+        if not heartbeat:
+            st.warning("Worker has not completed a cycle on this database.")
+        elif (now - datetime.fromisoformat(heartbeat["finished_at"])).total_seconds() > 1800:
+            st.warning(f"Worker inactive: last completed cycle {heartbeat['finished_at']}.")
+        else:
+            st.caption(f"Last paper cycle {heartbeat['finished_at']} | failures: {heartbeat['failures']}")
+    except (OSError, sqlite3.Error, ValueError, KeyError, TypeError) as error:
+        st.warning(f"Paper: NO TRADE | Risk status unavailable: {error}")
+
+
 def render_chart_snapshot(product: str, interval: str, pair: str, live: bool) -> None:
     require_chart_login()
     selection = (product, interval, pair)
@@ -113,6 +177,7 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool) ->
     stale = (datetime.now(timezone.utc) - close_time).total_seconds() > INTERVAL_MS[interval] / 1000
     if stale:
         st.warning("Snapshot is outdated. Refresh before assessing a new setup.")
+    render_trade_status(product, pair, latest, stale)
     st.caption(f"Last closed candle {close_time.isoformat(timespec='minutes')} · fetched {snapshot['fetched']}")
     display_candles = snapshot["display_candles"]
     forming = int(display_candles[-1]["time"]) > int(candles[-1]["time"])

@@ -58,7 +58,8 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(app.session_state["navigation"], "Signals")
 
     def test_ai_mode_and_paper_automation_controls_are_visible(self):
-        app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / 'app.py'), default_timeout=20).run()
+        with patch('maxtrade.paper.PaperLedger.ai_mode', return_value='Deterministic'):
+            app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / 'app.py'), default_timeout=20).run()
         self.assertFalse(app.exception)
         self.assertEqual(app.radio(key='ai_mode').value, 'Deterministic')
         self.assertTrue(app.button(key='azure_test').disabled)
@@ -135,7 +136,8 @@ class DashboardTests(unittest.TestCase):
         end = int(time() * 1000) // 3600000 * 3600000
         candles = [{"time": end - (80 - index) * 3600000, "open": 100,
                     "high": 101, "low": 99, "close": 100} for index in range(81)]
-        with patch("maxtrade.chart_page.CoinDCXClient") as client:
+        with patch("maxtrade.chart_page.CoinDCXClient") as client, \
+            patch('maxtrade.history.ScanHistory.recent_research', return_value=[]):
             client.return_value.spot_candles.return_value = candles
             app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=20)
             app.run()
@@ -149,6 +151,9 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(len(snapshot["candles"]), 80)
             self.assertEqual(len(snapshot["analyses"]), 31)
             self.assertTrue(any(item.value == "Closed-candle details" for item in app.subheader))
+            self.assertTrue(any(item.value == "Trade decision" for item in app.subheader))
+            self.assertTrue(any("Technical: WAIT / NO TRADE" in item.value for item in app.warning))
+            self.assertTrue(any("No matching full research assessment" in item.value for item in app.markdown))
             self.assertTrue(any("Technical direction: NO TRADE" in item.value for item in app.markdown))
             details = next(item.value for item in app.dataframe if "EMA 20" in item.value.columns)
             self.assertEqual(details["RSI 14"].tolist(), [snapshot["analyses"][-1].rsi])
@@ -171,6 +176,50 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(client.return_value.spot_candles.call_count, calls + 1)
             AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=20).run()
             self.assertEqual(client.return_value.spot_candles.call_count, calls + 1)
+
+    def test_chart_trade_status_blocks_stale_and_wrong_market_assessments(self):
+        def render():
+            from types import SimpleNamespace
+            from maxtrade.chart_page import render_trade_status
+            import streamlit as st
+            st.session_state['research_report'] = {'product': 'Spot', 'symbol': 'B-ETH_USDT'}
+            latest = SimpleNamespace(action='LONG', reason='Trend aligned', entry=100, stop=95, target=110)
+            render_trade_status('Spot', 'B-BTC_USDT', latest, True)
+
+        with patch('maxtrade.paper.PaperLedger') as ledger, patch('maxtrade.history.ScanHistory') as history:
+            ledger.return_value.account.return_value = {'kill_switch': True, 'occupied': False}
+            ledger.return_value.automation_enabled.return_value = False
+            history.return_value.worker_status.return_value = None
+            app = AppTest.from_function(render).run()
+            self.assertFalse(app.exception)
+            self.assertTrue(any('WAIT / NO TRADE' in item.value for item in app.warning))
+            self.assertTrue(any('No matching full research assessment' in item.value for item in app.markdown))
+            self.assertTrue(any('Worker has not completed' in item.value for item in app.warning))
+            self.assertFalse(app.metric)
+
+    def test_chart_saved_worker_veto_is_not_overridden_by_risk_recheck(self):
+        def render():
+            from types import SimpleNamespace
+            from maxtrade.chart_page import render_trade_status
+            latest = SimpleNamespace(action='LONG', reason='Trend aligned', entry=100, stop=95, target=110)
+            render_trade_status('Spot', 'B-BTC_USDT', latest, False)
+
+        report = {'product': 'Spot', 'symbol': 'B-BTC_USDT', 'paper_policy': 'autonomous-paper-v1',
+                  'created_at': '2026-10-07T10:00:00+00:00', 'expires_at': '2026-10-07T11:00:00+00:00',
+                  'evidence': [], 'blockers': ['Worker private configuration unavailable; new entries blocked']}
+        with patch('maxtrade.paper.PaperLedger') as ledger, patch('maxtrade.history.ScanHistory') as history, \
+                patch('maxtrade.paper.coordinate', return_value={'decision': 'BUY', 'blockers': []}):
+            ledger.return_value.account.return_value = {'kill_switch': False, 'occupied': False}
+            ledger.return_value.automation_enabled.return_value = True
+            ledger.return_value.ai_mode.return_value = 'Deterministic'
+            history.return_value.recent_research.return_value = [{'report': report}]
+            history.return_value.worker_status.return_value = None
+            app = AppTest.from_function(render).run()
+            self.assertFalse(app.exception)
+            self.assertTrue(any('Technical: LONG SETUP' in item.value for item in app.info))
+            self.assertTrue(any(item.value == 'Paper: NO TRADE' for item in app.markdown))
+            self.assertTrue(any('Worker private configuration unavailable' in item.value for item in app.markdown))
+            self.assertEqual([metric.label for metric in app.metric], ['Research entry', 'Stop', 'Target'])
 
     def test_backtest_results_invalidated_by_settings(self):
         from time import time

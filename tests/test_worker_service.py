@@ -4,11 +4,38 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from maxtrade.worker import worker_configuration
+from maxtrade.worker import worker_configuration, run_once
 from scripts.install_worker import service_definition
 
 
 class WorkerServiceTests(unittest.TestCase):
+    def test_configuration_blocker_preserves_reconciliation_without_submitting(self):
+        from maxtrade.paper import PaperLedger
+        from maxtrade.history import ScanHistory
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'paper.sqlite3'
+            ledger = PaperLedger(path)
+            ledger.set_automation(True)
+            report = {'technical_bias': 'NO TRADE', 'errors': [], 'evidence': [],
+                      'created_at': '2026-10-07T10:00:00+00:00', 'blockers': []}
+            decision = {'approved': True, 'decision': 'BUY', 'blockers': []}
+            with patch('maxtrade.worker.CoinDCXClient') as client, \
+                    patch('maxtrade.worker.run_coordinated_research', return_value=report), \
+                    patch('maxtrade.worker.coordinate', return_value=decision), \
+                    patch('maxtrade.worker.update_outcomes', return_value=[]), \
+                    patch('maxtrade.worker.save_daily_summary'), \
+                    patch('maxtrade.worker.telegram_config', return_value=None), \
+                    patch.object(PaperLedger, 'reconcile') as reconcile, \
+                    patch.object(PaperLedger, 'submit') as submit:
+                client.return_value.spot_candles.return_value = []
+                run_once(path, ['B-BTC_USDT'], entry_blocker='Private integrations unavailable')
+                reconcile.assert_called_once()
+                submit.assert_not_called()
+            saved = ScanHistory(path).recent_research()[0]['report']
+            self.assertEqual(saved['decision'], 'NO TRADE')
+            self.assertFalse(saved['risk']['approved'])
+            self.assertIn('Private integrations unavailable', saved['blockers'])
+
     def test_service_is_supervised_and_requires_private_integrations(self):
         definition = service_definition(Path("/tmp/maxtrade"))
         self.assertTrue(definition["KeepAlive"])

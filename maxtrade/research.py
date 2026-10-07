@@ -319,10 +319,28 @@ def render_paper_account() -> None:
                                key='paper_records_csv')
         from maxtrade.history import ScanHistory
         status = ScanHistory(ledger.path).worker_status()
+        if not enabled:
+            st.warning('New paper entries blocked: automation is paused.')
+        if account['kill_switch']:
+            st.warning('New paper entries blocked: paper kill switch is on.')
+        if account['occupied']:
+            st.info('New paper entries blocked: an existing pending/open position occupies the single position slot.')
+        latest_reports = {}
+        for saved in ScanHistory(ledger.path).recent_research():
+            report = saved['report']
+            if report.get('paper_policy') == 'autonomous-paper-v1':
+                latest_reports.setdefault(report['symbol'], report)
+        if latest_reports:
+            st.write('Latest autonomous decisions')
+            st.dataframe([{'Market': symbol, 'Assessed': report['created_at'],
+                           'Decision': report['decision'], 'Blockers': '; '.join(report['blockers'])}
+                          for symbol, report in latest_reports.items()], hide_index=True, width='stretch')
         if status:
             st.caption(f"Last cycle: {status['finished_at']} · mode: {status['mode']} · failures: {status['failures']}")
             if (datetime.now(timezone.utc) - datetime.fromisoformat(status['finished_at'])).total_seconds() > 1800:
                 st.warning('No completed worker cycle in the last 30 minutes.')
+        else:
+            st.warning('No completed paper worker cycle on this database.')
         if st.button("Reconcile paper positions", icon=":material/sync:"):
             from maxtrade.coindcx import CoinDCXClient
 

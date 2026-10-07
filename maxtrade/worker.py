@@ -22,7 +22,8 @@ from maxtrade.settings import AzureOpenAIConfig, TelegramConfig, azure_openai_co
 
 
 def run_once(path: Path, symbols: list[str], ai_config: AzureOpenAIConfig | None = None,
-             notification_config: TelegramConfig | None = None, continuous: bool = False) -> int:
+             notification_config: TelegramConfig | None = None, continuous: bool = False,
+             entry_blocker: str | None = None) -> int:
     if not 1 <= len(symbols) <= 5 or any(symbol not in {"B-BTC_USDT", "B-ETH_USDT"} for symbol in symbols):
         raise ValueError("Worker supports up to five BTC/ETH USDT spot selections")
     history = ScanHistory(path)
@@ -63,10 +64,14 @@ def run_once(path: Path, symbols: list[str], ai_config: AzureOpenAIConfig | None
                 decision = coordinate(report, datetime.now(timezone.utc), account=ledger.account(now), autonomous=True)
                 report.update(decision=decision['decision'], blockers=decision['blockers'], risk=decision,
                               paper_policy='autonomous-paper-v1', reason='Automated paper-only policy; no human review; no real orders.')
+                if entry_blocker:
+                    report['decision'] = 'NO TRADE'
+                    report['blockers'].append(entry_blocker)
+                    decision.update(approved=False, decision='NO TRADE')
                 if not reconciled:
                     report['decision'] = 'NO TRADE'
                     report['blockers'].append('Paper reconciliation failed')
-                elif decision['approved']:
+                elif decision['approved'] and not entry_blocker:
                     try:
                         report['paper_position_id'] = ledger.submit(report, datetime.now(timezone.utc), autonomous=True)
                     except sqlite3.IntegrityError:
@@ -168,10 +173,17 @@ def main() -> None:
     try:
         while True:
             try:
-                azure, telegram = worker_configuration(arguments.secrets_file, arguments.require_integrations)
+                entry_blocker = None
+                try:
+                    azure, telegram = worker_configuration(arguments.secrets_file, arguments.require_integrations)
+                except ValueError as error:
+                    logging.warning("Worker configuration: %s; reconciliation continues, new entries blocked", error)
+                    azure, telegram = None, None
+                    entry_blocker = "Worker private configuration unavailable; new entries blocked"
                 if arguments.require_integrations:
                     PaperLedger(arguments.database).set_ai_mode('Azure-assisted')
-                failures = run_once(arguments.database, arguments.symbols, azure, telegram, continuous=True)
+                failures = run_once(arguments.database, arguments.symbols, azure, telegram, continuous=True,
+                                    entry_blocker=entry_blocker)
                 logging.info("Worker cycle completed: failures=%s", failures)
             except ValueError as error:
                 logging.warning("Worker configuration: %s", error)
