@@ -5,6 +5,18 @@ from unittest.mock import Mock, patch
 from maxtrade.options import DeribitClient, scan_options, option_chain
 
 
+def chain_preview():
+    from unittest.mock import patch
+    from maxtrade.options import render_option_chain
+    rows = [{'Expiry UTC': expiry, 'Strike USD': strike, 'CALL contract': 'CALL',
+             'PUT contract': 'PUT', 'CALL bid': .02, 'PUT bid': .03}
+            for expiry, strikes in [('2030-01-01T08:00:00+00:00', [80000, 85000]),
+                                   ('2030-01-08T08:00:00+00:00', [90000, 95000])]
+            for strike in strikes]
+    with patch('maxtrade.options.option_chain', return_value=rows), patch('maxtrade.options.DeribitClient'):
+        render_option_chain('BTC', 'preview')
+
+
 class OptionsTests(unittest.TestCase):
     def setUp(self):
         self.now = 1791260000000
@@ -84,3 +96,15 @@ class OptionsTests(unittest.TestCase):
         self.assertEqual(rows[0]['PUT quote status'], 'STALE')
         with self.assertRaises(ValueError):
             option_chain(self.client, 'GOLD', self.now)
+
+    def test_chain_auto_load_and_expiry_strike_filters(self):
+        from streamlit.testing.v1 import AppTest
+        app = AppTest.from_function(chain_preview).run()
+        self.assertFalse(app.exception)
+        self.assertEqual(list(app.dataframe[0].value['Strike USD']), [80000, 85000])
+        app.selectbox[0].select('2030-01-08T08:00:00+00:00').run()
+        self.assertFalse(app.exception)
+        self.assertEqual(list(app.dataframe[0].value['Strike USD']), [90000, 95000])
+        app.select_slider[0].set_range(95000, 95000).run()
+        self.assertFalse(app.exception)
+        self.assertEqual(list(app.dataframe[0].value['Strike USD']), [95000])

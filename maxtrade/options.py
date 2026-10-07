@@ -116,7 +116,9 @@ def render_option_chain(currency: str, key: str) -> None:
     st.subheader(f'{currency} option chain')
     st.caption(f'Deribit public quotes · premiums in {currency} · strike in USD · CoinDCX options API not connected')
     snapshot_key = f'{key}_chain_snapshot'
-    if st.button('Load / refresh option chain', icon=':material/refresh:', key=f'{key}_chain_load', width='stretch'):
+    refresh = st.button('Refresh option chain', icon=':material/refresh:', key=f'{key}_chain_load', width='stretch')
+    snapshot = st.session_state.get(snapshot_key)
+    if refresh or not snapshot or snapshot['currency'] != currency:
         st.session_state.pop(snapshot_key, None)
         client = DeribitClient()
         try:
@@ -131,11 +133,35 @@ def render_option_chain(currency: str, key: str) -> None:
     snapshot = st.session_state.get(snapshot_key)
     if not snapshot or snapshot['currency'] != currency:
         return
-    expiry = st.selectbox('Expiry (UTC)', sorted({row['Expiry UTC'] for row in snapshot['rows']}), key=f'{key}_chain_expiry')
+    expiries = sorted({row['Expiry UTC'] for row in snapshot['rows']})
+    expiry_key = f'{key}_chain_expiry'
+    if st.session_state.get(expiry_key) not in expiries:
+        st.session_state[expiry_key] = expiries[0]
+    expiry = st.selectbox('Expiry date (UTC)', expiries,
+                         format_func=lambda value: datetime.fromisoformat(value).strftime('%d %b %Y · %H:%M UTC'),
+                         key=expiry_key)
     rows = [row for row in snapshot['rows'] if row['Expiry UTC'] == expiry]
-    columns = ['CALL bid', 'CALL ask', 'CALL mark', 'CALL IV %', 'CALL OI', 'Strike USD',
-               'PUT OI', 'PUT IV %', 'PUT mark', 'PUT bid', 'PUT ask']
-    st.dataframe(pd.DataFrame(rows).reindex(columns=columns), hide_index=True, width='stretch')
+    strikes = sorted({row['Strike USD'] for row in rows})
+    range_key = f'{key}_chain_strikes'
+    selection = (currency, expiry, tuple(strikes))
+    if st.session_state.get(f'{key}_chain_selection') != selection:
+        st.session_state.pop(range_key, None)
+        st.session_state[f'{key}_chain_selection'] = selection
+    if len(strikes) > 1:
+        lower, upper = st.select_slider('Strike range (USD)', options=strikes,
+                                       value=(strikes[0], strikes[-1]), key=range_key)
+        rows = [row for row in rows if lower <= row['Strike USD'] <= upper]
+    metrics = st.columns(3)
+    metrics[0].metric('Strikes', len(rows))
+    metrics[1].metric('CALL contracts', sum(bool(row.get('CALL contract')) for row in rows))
+    metrics[2].metric('PUT contracts', sum(bool(row.get('PUT contract')) for row in rows))
+    columns = ['CALL quote status', 'CALL volume', 'CALL OI', 'CALL IV %', 'CALL bid', 'CALL mark', 'CALL ask',
+               'Strike USD', 'PUT bid', 'PUT mark', 'PUT ask', 'PUT IV %', 'PUT OI', 'PUT volume', 'PUT quote status']
+    table = pd.DataFrame(rows).reindex(columns=columns).sort_values('Strike USD')
+    styled = table.style.set_properties(subset=['Strike USD'], **{'font-weight': 'bold', 'background-color': '#263238', 'color': '#ffffff'})
+    st.dataframe(styled, hide_index=True, width='stretch', height=480,
+                 column_config={column: st.column_config.NumberColumn(format='%.6f')
+                                for column in columns if column.endswith((' bid', ' ask', ' mark'))})
     age = (datetime.now(timezone.utc) - datetime.fromisoformat(snapshot['fetched'])).total_seconds()
     if age > 60:
         st.warning('Option chain snapshot is older than one minute; refresh quotes.')
