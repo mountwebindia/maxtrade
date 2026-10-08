@@ -94,6 +94,7 @@ def run_market_research(client: Any, product: str, symbol: str,
         raise ValueError("Research time must be timezone-aware")
     evidence = []
     errors = []
+    completed = {}
     for interval in ("1h", "4h"):
         try:
             if product == "Options":
@@ -103,6 +104,8 @@ def run_market_research(client: Any, product: str, symbol: str,
             else:
                 candles = client.spot_candles(symbol, interval)
             evidence.append(market_evidence(candles, product, symbol, interval, now))
+            completed[interval] = normalize_candles(candles, interval, count=len(candles),
+                                                   now_ms=int(now.timestamp() * 1000))
         except (RequestException, KeyError, TypeError, ValueError) as error:
             errors.append({"interval": interval, "reason": str(error)})
     directions = {item.action for item in evidence}
@@ -110,7 +113,15 @@ def run_market_research(client: Any, product: str, symbol: str,
     direction = evidence[0].action if aligned else "NO TRADE"
     if product == "Options":
         direction = {"LONG": "CALL BIAS", "SHORT": "PUT BIAS", "NO TRADE": "NO TRADE"}[direction]
+    from maxtrade.quality import shadow_quality
+    quality = None
+    try:
+        quality = shadow_quality(completed.get('1h', []), '1h', product != 'Spot',
+                                 completed.get('4h'), '4h')
+    except (KeyError, TypeError, ValueError, IndexError):
+        pass
     return {"schema_version": 1, "agent": "market-technical", "product": product, "symbol": symbol,
+            "quality": quality,
             "created_at": now.astimezone(timezone.utc).isoformat(),
             "expires_at": min((item.expires_at for item in evidence), default=now.isoformat()),
             "technical_bias": direction, "decision": "NO TRADE", "execution_enabled": False,
@@ -120,6 +131,37 @@ def run_market_research(client: Any, product: str, symbol: str,
                          "Derivatives/liquidity research not complete", "Portfolio risk checks not connected",
                          "Paper execution validation not complete"],
             "reason": "Technical evidence only; coordinated research and independent risk approval are incomplete."}
+
+
+def manager_reports(report: dict[str, Any]) -> list[dict[str, Any]]:
+    specifications = [
+        ('data-quality', report.get('evidence'), report.get('errors')),
+        ('technical-regime', report.get('quality'), None),
+        ('news-events', report.get('news'), report.get('news_error')),
+        ('sentiment', report.get('sentiment'), report.get('sentiment_error')),
+        ('liquidity-derivatives', report.get('derivatives'), report.get('derivatives_error')),
+        ('historical-evidence', report.get('historical_shadow'), None),
+        ('ai-reviewer', report.get('ai_review'), report.get('ai_error')),
+        ('performance-analyst', report.get('performance_shadow'), None),
+    ]
+    agents = []
+    evidence_keys = ['evidence', 'quality', 'news', 'sentiment', 'derivatives',
+                     'historical_shadow', 'ai_review', 'performance_shadow']
+    for (name, evidence, error), evidence_key in zip(specifications, evidence_keys):
+        unavailable = not evidence or (isinstance(evidence, dict) and evidence.get('status') == 'UNAVAILABLE')
+        source_blockers = evidence.get('blockers', []) if isinstance(evidence, dict) else []
+        blockers = [str(error)] if error else ['Evidence unavailable'] if unavailable else list(source_blockers)
+        agents.append({'agent': name, 'status': 'UNAVAILABLE' if unavailable or error else 'AVAILABLE',
+                       'as_of': report['created_at'], 'expires_at': report.get('expires_at'),
+                       'evidence_key': evidence_key, 'blockers': blockers,
+                       'execution_enabled': False})
+    concerns = list(report.get('blockers', []))
+    concerns.extend(['News feed is not a comprehensive event calendar',
+                     'Derivatives context does not verify spot order-book depth',
+                     'Historical and quality results are shadow evidence, not calibrated probabilities'])
+    agents.append({'agent': 'challenger', 'status': 'CAUTION', 'as_of': report['created_at'],
+                   'blockers': concerns, 'execution_enabled': False})
+    return agents
 
 
 def run_coordinated_research(client: Any, product: str, symbol: str) -> dict[str, Any]:
@@ -149,6 +191,8 @@ def run_coordinated_research(client: Any, product: str, symbol: str) -> dict[str
     risk = coordinate(report, datetime.now(timezone.utc))
     report.update(risk=risk, blockers=risk["blockers"], decision=risk["decision"],
                   reason="Evidence-backed research; manual event review and paper account risk approval required.")
+    report['agent'] = 'research-manager-v1'
+    report['agents'] = manager_reports(report)
     return report
 
 
@@ -275,6 +319,11 @@ def render_worker_diagnostics(status: dict | None, reports: list[dict], now: dat
         st.info('Azure: no saved autonomous assessment on this database.')
     for report in reports:
         st.write(f"{report['symbol']} · assessed {report['created_at']}")
+        agents = report.get('agents', [])
+        if agents:
+            rows = [{'Agent': item['agent'], 'Status': item['status'],
+                     'Blockers': '; '.join(item['blockers'])} for item in agents]
+            st.dataframe(rows, hide_index=True, width='stretch')
         if report.get('ai_error'):
             st.warning(f"Azure unavailable: {report['ai_error']}")
         elif report.get('ai_mode') != 'Azure-assisted':
@@ -283,9 +332,12 @@ def render_worker_diagnostics(status: dict | None, reports: list[dict], now: dat
             st.warning('Azure unavailable: no structured review saved for this assessment.')
         else:
             review = report['ai_review']
+            provider = review.get('provider', 'Azure')
+            st.caption(f"Provider: {provider} · model: {review.get('deployment', 'unknown')}"
+                       f" · fallback: {bool(review.get('fallback'))} · shadow: {bool(review.get('shadow_only'))}")
             verdict = review['verdict']
             concerns = review['concerns']
-            if verdict == 'CLEAR' and not concerns:
+            if verdict == 'CLEAR' and not concerns and not review.get('shadow_only'):
                 st.success('Azure: CLEAR, no additional concerns. Other evidence and risk gates still apply.')
             else:
                 st.warning(f'Azure: {verdict} · new entries blocked by this review.')

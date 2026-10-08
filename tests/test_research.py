@@ -12,6 +12,107 @@ from maxtrade.paper import PaperLedger, coordinate
 
 
 class ResearchTests(unittest.TestCase):
+    def test_provider_private_config_and_transient_classification(self):
+        from requests import Timeout, ConnectionError
+        from requests.exceptions import SSLError
+        from maxtrade.ai_review import ProviderUnavailable
+        from maxtrade.azure_ai import review_evidence
+        from maxtrade.settings import azure_openai_config
+        values = {'AZURE_OPENAI_API_KEY': 'private-azure', 'ANTHROPIC_API_KEY': 'private-claude',
+                  'ANTHROPIC_MODEL': 'claude-test', 'MAXTRADE_CLAUDE_FALLBACK': 'true'}
+        config = azure_openai_config(values, {})
+        self.assertTrue(config.fallback_enabled)
+        self.assertFalse(config.fallback_paper_enabled)
+        self.assertNotIn('private-claude', repr(config))
+        with self.assertRaises(ValueError):
+            azure_openai_config(dict(values, ANTHROPIC_MODEL=''), {})
+        for error in (Timeout('private-request'), ConnectionError('private-request')):
+            with patch('maxtrade.azure_ai.requests.Session') as session:
+                session.return_value.__enter__.return_value.post.side_effect = error
+                with self.assertRaises(ProviderUnavailable) as raised:
+                    review_evidence(config, {})
+                self.assertNotIn('private-request', str(raised.exception))
+        for http_code in (401, 403, 429, 500, 503):
+            with patch('maxtrade.azure_ai.requests.Session') as session:
+                session.return_value.__enter__.return_value.post.return_value.status_code = http_code
+                with self.assertRaises(ValueError) as raised:
+                    review_evidence(config, {})
+                self.assertEqual(isinstance(raised.exception, ProviderUnavailable), http_code >= 429)
+        with patch('maxtrade.azure_ai.requests.Session') as session:
+            session.return_value.__enter__.return_value.post.side_effect = SSLError('private-request')
+            with self.assertRaises(ValueError) as raised:
+                review_evidence(config, {})
+            self.assertNotIsInstance(raised.exception, ProviderUnavailable)
+
+    def test_claude_structured_review_and_refusal_fail_closed(self):
+        import json
+        from maxtrade.ai_review import ProviderUnavailable, review_claude
+        from maxtrade.settings import ClaudeConfig
+        config = ClaudeConfig('claude-test', 'private-test')
+        document = {'stop_reason': 'end_turn', 'content': [{'type': 'text', 'text': json.dumps(
+            {'verdict': 'CLEAR', 'summary': 'Evidence reviewed', 'concerns': []})}]}
+        with patch('maxtrade.ai_review.requests.Session') as session:
+            post = session.return_value.__enter__.return_value.post
+            response = post.return_value
+            response.status_code = 200
+            response.content = b'{}'
+            response.json.return_value = document
+            self.assertEqual(review_claude(config, {})['verdict'], 'CLEAR')
+            self.assertEqual(post.call_args.args[0], 'https://api.anthropic.com/v1/messages')
+            self.assertFalse(post.call_args.kwargs['allow_redirects'])
+            self.assertNotIn('private-test', str(post.call_args.kwargs['json']))
+            for invalid in (dict(document, stop_reason='max_tokens'),
+                            dict(document, stop_reason='refusal'),
+                            dict(document, stop_details={'type': 'refusal'}),
+                            dict(document, content=[]),
+                            dict(document, content=[{'type': 'text', 'text': '{}'}])):
+                response.json.return_value = invalid
+                with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                    review_claude(config, {})
+            for http_code in (401, 429, 500):
+                response.status_code = http_code
+                with self.assertRaises(ValueError) as failure:
+                    review_claude(config, {})
+                self.assertEqual(isinstance(failure.exception, ProviderUnavailable), http_code != 401)
+
+    def test_fallback_shadow_cannot_approve_paper(self):
+        report = dict(self.paper_report(), ai_mode='Azure-assisted',
+                      ai_review={'verdict': 'CLEAR', 'concerns': [], 'shadow_only': True})
+        account = {'capital': 10000, 'equity': 10000, 'daily_pnl': 0,
+                   'occupied': False, 'kill_switch': False}
+        self.assertFalse(coordinate(report, self.now, account=account, autonomous=True)['approved'])
+
+    def test_quality_uses_completed_volume_bars(self):
+        from unittest.mock import Mock
+        client = Mock()
+        client.spot_candles.side_effect = [[dict(bar, volume=100) for bar in self.bars(interval)]
+                                         for interval in ('1h', '4h')]
+        report = run_market_research(client, 'Spot', 'B-BTC_USDT', self.now)
+        self.assertEqual(report['quality']['mode'], 'SHADOW ONLY')
+        self.assertEqual(report['quality']['interval'], '1h')
+        self.assertFalse(report['execution_enabled'])
+
+    def test_provider_fallback_only_on_outage(self):
+        from maxtrade.ai_review import ProviderUnavailable, routed_review
+        from maxtrade.settings import AzureOpenAIConfig, ClaudeConfig
+        config = AzureOpenAIConfig('https://example.com', 'model', 'v1', 'private',
+                                  ClaudeConfig('claude-test', 'private'))
+        for failure in (ValueError('refusal'), ValueError('invalid schema'),
+                        ProviderUnavailable('HTTP 429')):
+            with self.subTest(failure=str(failure)), patch('maxtrade.azure_ai.review_evidence', side_effect=failure), \
+                    patch('maxtrade.ai_review.review_claude', return_value={'verdict': 'CLEAR'}) as fallback:
+                if isinstance(failure, ProviderUnavailable):
+                    self.assertTrue(routed_review(config, {}, True)['fallback'])
+                    fallback.assert_called_once()
+                else:
+                    with self.assertRaises(ValueError):
+                        routed_review(config, {}, True)
+                    fallback.assert_not_called()
+        with patch('maxtrade.azure_ai.review_evidence', return_value={'verdict': 'VETO'}), \
+                patch('maxtrade.ai_review.review_claude') as fallback:
+            self.assertEqual(routed_review(config, {}, True)['verdict'], 'VETO')
+            fallback.assert_not_called()
+
     def bars(self, interval, count=80):
         duration = {"1h": 3600000, "4h": 14400000}[interval]
         end = int(self.now.timestamp() * 1000) // duration * duration

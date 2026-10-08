@@ -1,0 +1,111 @@
+services:
+  worker:
+    image: maxtrade-worker:34388ef
+    container_name: maxtrade-paper-worker
+    restart: unless-stopped
+    init: true
+    working_dir: /app
+    entrypoint: ["/bin/bash", "-l", "-c"]
+    command:
+      - exec /opt/venv/bin/python -m maxtrade.worker --watch --database /app/data/scan_history.sqlite3 --secrets-file /app/data/private/secrets.toml --require-integrations
+    environment:
+      MAXTRADE_DATABASE: /app/data/scan_history.sqlite3
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - /data/coolify/applications/benhw4xqxobdmkkr3c7t1qmx/maxtrade-data:/app/data
+      - /data/coolify/applications/benhw4xqxobdmkkr3c7t1qmx/maxtrade-data/private:/app/data/private:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 1g
+    cpus: 0.75
+    healthcheck:
+      test:
+        - CMD
+        - /bin/bash
+        - -l
+        - -c
+        - /opt/venv/bin/python -c "import sqlite3; from datetime import datetime, timezone; connection=sqlite3.connect('file:/app/data/scan_history.sqlite3?mode=ro',uri=True); row=connection.execute('SELECT finished_at, mode, failures FROM worker_status WHERE id=1').fetchone(); assert row and row[1]=='watch' and row[2]==0 and 0 <= (datetime.now(timezone.utc)-datetime.fromisoformat(row[0])).total_seconds() < 2100"
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 120s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+  monitor:
+    image: maxtrade-worker:34388ef
+    container_name: maxtrade-worker-monitor
+    restart: unless-stopped
+    init: true
+    working_dir: /app
+    entrypoint: ["/bin/bash", "-l", "-c"]
+    command:
+      - exec /opt/venv/bin/python -m scripts.monitor_worker --watch --database /app/data/scan_history.sqlite3 --secrets-file /app/private/secrets.toml --state /app/monitor-state/status.json --research-state /app/research-state/research-status.json
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - /data/coolify/applications/benhw4xqxobdmkkr3c7t1qmx/maxtrade-data:/app/data:ro
+      - /data/coolify/applications/benhw4xqxobdmkkr3c7t1qmx/maxtrade-data/private:/app/private:ro
+      - /opt/maxtrade-worker/monitor_worker.py:/app/scripts/monitor_worker.py:ro
+      - /opt/maxtrade-worker/monitor-state:/app/monitor-state
+      - /opt/maxtrade-worker/research-state:/app/research-state:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    cpus: 0.25
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+  research:
+    image: maxtrade-worker:34388ef
+    container_name: maxtrade-research-worker
+    restart: unless-stopped
+    init: true
+    working_dir: /app
+    entrypoint: ["/bin/bash", "-l", "-c"]
+    command:
+      - exec /opt/venv/bin/python -m scripts.research_worker --watch --database /app/data/historical.sqlite3 --ledger /app/data/scan_history.sqlite3 --state /app/research-state/research-status.json
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - /data/coolify/applications/benhw4xqxobdmkkr3c7t1qmx/maxtrade-data:/app/data
+      - /data/coolify/applications/benhw4xqxobdmkkr3c7t1qmx/maxtrade-data/scan_history.sqlite3:/app/data/scan_history.sqlite3:ro
+      - /data/coolify/applications/benhw4xqxobdmkkr3c7t1qmx/maxtrade-data/private:/app/data/private:ro
+      - /opt/maxtrade-worker/research-state:/app/research-state
+      - /opt/maxtrade-worker/research_worker.py:/app/scripts/research_worker.py:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 1g
+    cpus: 0.5
+    healthcheck:
+      test:
+        - CMD
+        - /bin/bash
+        - -l
+        - -c
+        - /opt/venv/bin/python -c "import json; from datetime import datetime, timezone; from pathlib import Path; report=json.loads(Path('/app/research-state/research-status.json').read_text()); assert report['failures']==0 and 0 <= (datetime.now(timezone.utc)-datetime.fromisoformat(report['generated'])).total_seconds() < 28800"
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 600s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"

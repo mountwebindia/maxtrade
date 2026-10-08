@@ -1,0 +1,3 @@
+services:
+  benhw4xqxobdmkkr3c7t1qmx-20261007T154546:
+    image: maxtrade-worker:manager-20261008

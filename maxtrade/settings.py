@@ -30,11 +30,33 @@ def telegram_config(environment: Mapping[str, Any] | None = None,
 
 
 @dataclass(frozen=True)
+class ClaudeConfig:
+    model: str
+    api_key: str = field(repr=False)
+
+
+def claude_config(environment: Mapping[str, Any] | None = None,
+                  secrets: Mapping[str, Any] | None = None) -> ClaudeConfig | None:
+    environment = os.environ if environment is None else environment
+    secrets = {} if secrets is None else secrets
+    model, api_key = [str(environment.get(name) or secrets.get(name) or '').strip()
+                      for name in ('ANTHROPIC_MODEL', 'ANTHROPIC_API_KEY')]
+    if not model and not api_key:
+        return None
+    if not api_key or not re.fullmatch(r'claude-[A-Za-z0-9_.-]+', model):
+        raise ValueError('Claude configuration incomplete; add model and API key privately.')
+    return ClaudeConfig(model, api_key)
+
+
+@dataclass(frozen=True)
 class AzureOpenAIConfig:
     endpoint: str
     deployment: str
     api_version: str
     api_key: str = field(repr=False)
+    claude: ClaudeConfig | None = None
+    fallback_enabled: bool = False
+    fallback_paper_enabled: bool = False
 
 
 def azure_openai_config(environment: Mapping[str, Any] | None = None,
@@ -63,7 +85,17 @@ def azure_openai_config(environment: Mapping[str, Any] | None = None,
         api_version = "v1"
     elif not re.fullmatch(r"\d{4}-\d{2}-\d{2}(?:-preview)?", api_version):
         raise ValueError("Azure OpenAI API version must be a dated version, optionally ending in -preview.")
-    return AzureOpenAIConfig(endpoint.rstrip("/"), deployment, api_version, api_key)
+    flags = []
+    for name in ('MAXTRADE_CLAUDE_FALLBACK', 'MAXTRADE_CLAUDE_PAPER_ENABLED'):
+        value = str(environment.get(name) or secrets.get(name) or 'false').strip().lower()
+        if value not in {'true', 'false', '1', '0'}:
+            raise ValueError(f'{name} must be true or false')
+        flags.append(value in {'true', '1'})
+    claude = claude_config(environment, secrets)
+    if flags[0] and claude is None:
+        raise ValueError('Claude fallback enabled without private Claude configuration')
+    return AzureOpenAIConfig(endpoint.rstrip("/"), deployment, api_version, api_key,
+                             claude, flags[0], flags[1])
 
 
 def credential_status(environment: Mapping[str, Any] | None = None,

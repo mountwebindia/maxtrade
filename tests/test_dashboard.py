@@ -159,11 +159,14 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(app.session_state["navigation"], "Signals")
 
     def test_ai_mode_and_paper_automation_controls_are_visible(self):
-        with patch('maxtrade.paper.PaperLedger.ai_mode', return_value='Deterministic'):
+        with patch('maxtrade.paper.PaperLedger.ai_mode', return_value='Deterministic'), \
+            patch('maxtrade.settings.azure_openai_config', return_value=None), \
+            patch('maxtrade.settings.claude_config', return_value=None):
             app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / 'app.py'), default_timeout=20).run()
         self.assertFalse(app.exception)
         self.assertEqual(app.radio(key='ai_mode').value, 'Deterministic')
         self.assertTrue(app.button(key='azure_test').disabled)
+        self.assertTrue(app.button(key='claude_test').disabled)
         self.assertTrue(any(button.key == 'paper_automation' for button in app.button))
         self.assertTrue(any(metric.label == 'Net paper win rate' for metric in app.metric))
 

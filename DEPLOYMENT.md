@@ -22,6 +22,31 @@ Publishing before setting these secrets deliberately locks the app. Password has
 
 ## Azure OpenAI backend configuration
 
+### Claude outage fallback and specialist manager
+
+The research manager assembles data quality, technical/regime, news, sentiment,
+derivatives, historical, AI review, performance and challenger reports. These are
+software specialists using existing evidence collectors, not independently trained
+models. Historical/quality monitoring and performance analysis remain shadow-only;
+no agent changes production rules or model weights. Missing event-calendar and
+spot-depth coverage are explicit limitations. Risk approval is independent.
+
+Configure `ANTHROPIC_API_KEY` and an account-accessible `ANTHROPIC_MODEL` privately.
+Use Settings > Test Claude connection to verify a paid structured response, without
+submitting a trade. Enable `MAXTRADE_CLAUDE_FALLBACK = true` to try Claude once after
+an Azure timeout, connection failure, HTTP 429 or HTTP 5xx. Each cycle starts with
+Azure again. Authentication errors, refusals, malformed responses, VETO and
+UNCERTAIN never trigger another provider to seek a different answer.
+
+Fallback reviews initially carry `shadow_only=true` and cannot approve PAPER
+entries. Only explicit `MAXTRADE_CLAUDE_PAPER_ENABLED = true` permits a validated
+Claude CLEAR/no-concerns review through the unchanged independent risk gates.
+Compare forward outcomes before opting in; this setting does not certify accuracy.
+Both-provider failure blocks new entries while reconciliation continues. Reviews
+archive provider, model, fallback reason, total latency and returned token counts;
+no monetary cost is inferred. No Claude key is bundled or automatically configured.
+Changes must be deployed together to dashboard and worker before live use.
+
 The configured non-secret defaults target the supplied `gpt-6-astra-2` deployment through Responses v1. Add the API key privately in Streamlit Community Cloud's **Manage app > Settings > Secrets**, preserving existing login settings, or as a server environment variable. Environment values take precedence. Do not paste the API key into chat or commit it. Endpoint and deployment can be overridden:
 
 ```toml
@@ -37,6 +62,112 @@ Legacy Chat Completions remains supported with an HTTPS resource root endpoint, 
 Settings now exposes an AI research mode selector and an explicit connection-test button. Azure-assisted worker cycles send public evidence to the configured deployment and require a validated structured review. VETO, UNCERTAIN, concerns, missing credentials or request failures block new autonomous paper entries. A CLEAR review cannot override deterministic risk checks and is not comprehensive event clearance. Azure requests incur provider charges. No resource provisioning or private credential setup is automatic.
 
 ## Autonomous paper operation
+
+### Current Azure VM worker
+
+The dashboard and independent `maxtrade-paper-worker` container share
+`/app/data/scan_history.sqlite3` on the Azure VM. The host directory is
+`/data/coolify/applications/benhw4xqxobdmkkr3c7t1qmx/maxtrade-data`.
+The worker manifest is [deployment/worker.compose.yml](deployment/worker.compose.yml),
+installed privately at `/opt/maxtrade-worker/compose.yml` on the VM.
+On 2026-10-08, dashboard, paper worker, monitor and research worker were deployed
+with `maxtrade-worker:manager-20261008`. This overlays the tested Python modules
+on the existing `34388ef` runtime without dependency or trading-policy changes.
+The source-only build uses [deployment/runtime.Dockerfile](deployment/runtime.Dockerfile).
+The image overrides are [deployment/runtime-worker.override.yml](deployment/runtime-worker.override.yml)
+and [deployment/runtime-dashboard.override.yml](deployment/runtime-dashboard.override.yml).
+
+Effective owner-only manifests are persisted at `/opt/maxtrade-worker/compose.yml`
+and `/data/coolify/applications/benhw4xqxobdmkkr3c7t1qmx/docker-compose.yaml`.
+Release artifacts and original manifests (`worker-before.yml`,
+`dashboard-before.yml`) are protected under
+`/opt/maxtrade-worker/releases/manager-20261008`. For code rollback, restore the
+appropriate original manifest and run Compose with project `maxtrade-worker` or
+`benhw4xqxobdmkkr3c7t1qmx`, scoped to its MaxTrade services. Keep the live ledger;
+do not restore a pre-deployment database over subsequent trading records.
+The old runtime image remains available for rollback.
+
+The pre-deployment online backup `manager-predeploy-20261008T062900Z.sqlite3`
+passed integrity checking and isolated restore/count verification for all 12
+tables. After rollout, dashboard and worker health passed, fresh BTC/ETH reports
+contained nine specialist/challenger records and Azure reviews, and the worker
+reported zero failures. Automation remained ON, kill switch OFF. Claude was not
+configured; fallback and Claude PAPER approval remained disabled.
+
+The owner selected GitHub release branch `release/manager-20261008` for Coolify
+publication, keeping `main` unchanged because the existing Streamlit Cloud app
+tracks that branch. Do not merge this release into `main` until Cloud automatic
+updates have been addressed. Coolify must track the release branch before a
+source rebuild; rebuilding the old branch would replace the runtime overlay
+with older code. Dashboard redeployments do not automatically update the worker
+image. The worker remains pinned to the verified manager runtime.
+
+The worker runs BTC/ETH public research every 15 minutes, requires private Azure
+and Telegram configuration, and enforces Azure-assisted paper review. Secrets
+are mounted read-only from `/app/data/private/secrets.toml`. No host ports are
+published. Docker `unless-stopped` provides restart supervision, and container
+logs rotate at three 10 MB files. The heartbeat health check requires a successful
+watch cycle within 35 minutes; unhealthy status alone does not restart Docker
+containers or send an external outage alert.
+
+On 2026-10-07, the owner explicitly chose to keep paper automation ON with the
+kill switch OFF. Completed watch cycles reported zero failures; the shared
+ledger integrity and database-specific worker lock were verified. Real orders
+remain disabled. A fresh SQLite online backup was restored into an isolated
+memory database and passed integrity checking. Same-VM backups are not disaster
+recovery. On 2026-10-07 the owner deferred off-host backups, with Cloudflare R2
+planned for a later setup. The imported ledger came from an authorized local
+backup, not Cloud. Cloud deletion remains deferred until an off-host backup and
+restore test have passed.
+
+The separate `maxtrade-worker-monitor` container checks the read-only heartbeat
+every minute and sends Telegram notifications on unhealthy/recovered transitions
+for both paper cycles and the six-hour research refresh. Research is unhealthy
+when its report is missing, eight hours old, future-dated, or reports failures.
+Successful delivery is acknowledged in private persisted state; failed delivery
+is retried. It cannot detect or report a whole-VM or network outage while that
+same host is unavailable. External outage monitoring remains pending.
+
+Coolify administration is available at
+https://coolify.20.127.223.248.sslip.io/ with a trusted TLS certificate.
+[deployment/coolify-admin.yaml](deployment/coolify-admin.yaml) routes only that
+host to the admin service and its `/app/` WebSocket path to realtime port 6001.
+The secure WebSocket handshake was verified. Existing port 8000 access remains
+unchanged; this setup does not restrict public admin access or replace login.
+
+The independent `maxtrade-research-worker` runs continuously with Docker restart
+supervision and refreshes completed UTC candles every six hours. It ingests
+1,200 daily days and the latest 30 hourly days for BTC/ETH into the shared
+`/app/data/historical.sqlite3`, with journals in the same directory. Its paper
+ledger file is mounted read-only. Provider failures are isolated by market and
+interval. The first deployed cycle on 2026-10-07 reported complete coverage,
+zero missing bars and zero failures in all four requested ranges; daily shadow
+contexts were `AVAILABLE` with `execution_enabled=False`.
+
+The private persisted report is
+`/opt/maxtrade-worker/research-state/research-status.json`. It includes coverage,
+regime and cost-aware forward evaluation of recorded predictions. The first
+cycle reported `WAITING FOR MATURE COST-AWARE SAMPLES`. This is evidence
+collection and shadow evaluation, not model training or automatic strategy
+improvement. Rules and model weights remain unchanged. Recent complete hourly
+coverage does not resolve the original one-year gaps or certify CoinDCX execution.
+Previously inspected holdout data cannot become an untouched test by reuse.
+The existing two-day daily-context freshness veto still applies during outages.
+
+Run these commands on the VM:
+
+```sh
+sudo -n docker compose -f /opt/maxtrade-worker/compose.yml up -d --wait
+docker inspect --format '{{.State.Health.Status}}' maxtrade-paper-worker
+sudo -n docker compose -f /opt/maxtrade-worker/compose.yml stop
+```
+
+Stopping the worker also stops open-position reconciliation. Use dashboard
+**Pause paper automation** to block new entries while keeping research and
+reconciliation running. Do not run cron or a second watch process alongside this
+worker. The Mac and Cloud ledgers are separate and have not been retired.
+Before updating the worker, take a fresh online backup, pin the tested image,
+validate the Compose manifest, and verify a new completed heartbeat after launch.
 
 Settings exposes **Start paper automation**, **Pause paper automation**, and a one-shot research cycle. Starting switches the paper kill switch off; pausing switches it on and cancels pending entries, not open positions. The persisted autonomous-paper-v1 policy removes human approval only for paper automation. BTC/ETH USDT spot, fresh 1h/4h LONG alignment, provider freshness/liquidity, one occupied position, 1% risk, 25% allocation and a 3% realized daily-loss veto remain enforced. Headlines are limited market context, not comprehensive macro/event clearance. Real orders remain disabled.
 

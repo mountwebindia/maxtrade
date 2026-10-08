@@ -44,7 +44,8 @@ def coordinate(report: dict[str, Any], now: datetime, reviewed: bool = False,
         blockers.append("Human news/event review required")
     if report.get('ai_mode') == 'Azure-assisted':
         review = report.get('ai_review')
-        if not isinstance(review, dict) or review.get('verdict') != 'CLEAR' or review.get('concerns'):
+        if (not isinstance(review, dict) or review.get('verdict') != 'CLEAR'
+            or review.get('concerns') or review.get('shadow_only')):
             blockers.append('Azure review veto, uncertainty or unavailable')
     if not account:
         blockers.append("Paper account risk state unavailable")

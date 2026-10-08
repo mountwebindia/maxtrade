@@ -1,0 +1,7 @@
+services:
+  worker:
+    image: maxtrade-worker:manager-20261008
+  monitor:
+    image: maxtrade-worker:manager-20261008
+  research:
+    image: maxtrade-worker:manager-20261008

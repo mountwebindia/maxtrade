@@ -1,0 +1,26 @@
+http:
+  routers:
+    maxtrade-coolify-realtime:
+      rule: Host(`coolify.20.127.223.248.sslip.io`) && PathPrefix(`/app/`)
+      priority: 100
+      entryPoints:
+        - https
+      service: maxtrade-coolify-realtime
+      tls:
+        certResolver: letsencrypt
+    maxtrade-coolify-admin:
+      rule: Host(`coolify.20.127.223.248.sslip.io`)
+      entryPoints:
+        - https
+      service: maxtrade-coolify-admin
+      tls:
+        certResolver: letsencrypt
+  services:
+    maxtrade-coolify-realtime:
+      loadBalancer:
+        servers:
+          - url: http://coolify:6001
+    maxtrade-coolify-admin:
+      loadBalancer:
+        servers:
+          - url: http://coolify:8080

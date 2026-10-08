@@ -50,16 +50,19 @@ def run_once(path: Path, symbols: list[str], ai_config: AzureOpenAIConfig | None
                 logging.exception("Paper reconciliation failed for %s; research will continue", symbol)
             report = run_coordinated_research(client, "Spot", symbol)
             report['ai_mode'] = ledger.ai_mode()
+            from maxtrade.research import manager_reports
+            report['performance_shadow'] = dict(ledger.performance(), mode='SHADOW ONLY')
             if report['ai_mode'] == 'Azure-assisted':
-                from maxtrade.azure_ai import review_evidence
+                from maxtrade.ai_review import routed_review
                 try:
                     configuration = ai_config or azure_openai_config()
                     if configuration is None:
                         raise ValueError('Azure OpenAI is not configured')
-                    report['ai_review'] = review_evidence(configuration, report)
+                    report['ai_review'] = routed_review(configuration, report)
                 except ValueError as error:
                     report['ai_error'] = str(error)
                     errors += 1
+            report['agents'] = manager_reports(report)
             if ledger.automation_enabled():
                 decision = coordinate(report, datetime.now(timezone.utc), account=ledger.account(now), autonomous=True)
                 report.update(decision=decision['decision'], blockers=decision['blockers'], risk=decision,
@@ -85,6 +88,7 @@ def run_once(path: Path, symbols: list[str], ai_config: AzureOpenAIConfig | None
                     'Signal': report['technical_bias'],
                     'Signal candle time': int(datetime.fromisoformat(hourly['event_time']).timestamp() * 1000) - 3600000,
                     'Stop': hourly['values']['stop'], 'Target': hourly['values']['target'],
+                    'Quality': report.get('quality'),
                 }])
             fingerprint = hashlib.sha256(json.dumps([symbol, report["technical_bias"], report["blockers"],
                 [(item["interval"], item["event_time"]) for item in report["evidence"]]], sort_keys=True).encode()).hexdigest()
