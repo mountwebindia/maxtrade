@@ -11,6 +11,62 @@ from maxtrade.historical_features import causal_features, evaluate, forward_outc
 
 
 class HistoricalTests(unittest.TestCase):
+    def test_training_registry_freezes_forecasts_and_scores_only_mature_predictions(self):
+        import math
+        from unittest.mock import patch
+        from maxtrade.training import train_shadow
+        bars = []
+        for index in range(1207):
+            price = 100 + 12 * math.sin(index / 12) + index * .01
+            bars.append({'time': index * 86400000, 'open': price, 'close': price + .1,
+                         'high': price + 2, 'low': price - 2, 'volume': 100 + index % 11})
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database, registry = root / 'history.sqlite3', root / 'models.sqlite3'
+            with sqlite3.connect(database) as connection:
+                connection.execute('CREATE TABLE historical_reports '
+                                   '(product TEXT,interval TEXT,start INTEGER,end INTEGER,report TEXT)')
+                for count in (1200, 1207):
+                    saved = {'generated': datetime.fromtimestamp(count * 86400, timezone.utc).isoformat(),
+                             'pages': []}
+                    connection.execute('INSERT INTO historical_reports VALUES (?,?,?,?,?)',
+                                       ('BTC-USD', '1d', 0, count * 86400, json.dumps(saved)))
+            with patch('maxtrade.training.load_dataset', return_value=(bars[:1200],
+                       {'dataset_sha256': 'first'})):
+                now = datetime.fromtimestamp(1200 * 86400 + 3600, timezone.utc)
+                first = train_shadow(database, registry, 'BTC-USD', 0, 1200 * 86400, now)
+                repeated = train_shadow(database, registry, 'BTC-USD', 0, 1200 * 86400, now)
+            self.assertEqual(first['model_id'], repeated['model_id'])
+            self.assertEqual(first['prospective_samples'], 0)
+            with patch('maxtrade.training.load_dataset', return_value=(bars,
+                       {'dataset_sha256': 'second'})):
+                mature = train_shadow(database, registry, 'BTC-USD', 0, 1207 * 86400,
+                                      now + timedelta(days=7))
+            self.assertEqual(mature['prospective_samples'], 1)
+            self.assertFalse(mature['promotion_allowed'])
+            with sqlite3.connect(registry) as connection:
+                self.assertEqual(connection.execute('SELECT count(*) FROM models').fetchone()[0], 2)
+                self.assertEqual(connection.execute('SELECT count(*) FROM forecasts').fetchone()[0], 2)
+            self.assertEqual(registry.stat().st_mode & 0o077, 0)
+
+    def test_training_is_purged_and_shadow_only(self):
+        import math
+        from maxtrade.training import fit_candidate
+        bars = []
+        for index in range(1200):
+            price = 100 + 12 * math.sin(index / 12) + index * .01
+            bars.append({'time': index * 86400000, 'open': price, 'close': price + .1,
+                         'high': price + 2, 'low': price - 2, 'volume': 100 + index % 11})
+        report, outcomes = fit_candidate(bars, datetime.fromtimestamp(1200 * 86400, timezone.utc))
+        self.assertFalse(report['execution_enabled'])
+        self.assertEqual(len(report['walk_forward']), 3)
+        for window in report['walk_forward']:
+            self.assertLess(window['train_last_maturity_ms'], window['test_start_ms'])
+        self.assertTrue(0 <= report['probability_positive_net_return'] <= 1)
+        self.assertEqual(outcomes['maturity'].iloc[199], 206 * 86400000)
+        with self.assertRaisesRegex(ValueError, 'completed'):
+            fit_candidate(bars, datetime.fromtimestamp(1199 * 86400, timezone.utc))
+
     def test_gap_audit_is_fresh_and_preserves_original_history(self):
         session = Mock()
         row = [0, 99, 102, 100, 101, 10]

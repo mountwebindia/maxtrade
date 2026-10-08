@@ -10,6 +10,30 @@ from scripts.monitor_worker import monitor_once, worker_health
 
 
 class WorkerServiceTests(unittest.TestCase):
+    def test_shadow_training_is_opt_in_and_failure_isolated(self):
+        from datetime import datetime, timezone
+        from scripts.research_worker import research_once
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch('scripts.research_worker.ingest', return_value={
+                    'status': 'COMPLETE', 'coverage_pct': 100, 'missing_bars': 0,
+                    'start': 0, 'end': 0}), \
+                    patch('scripts.research_worker.historical_context', return_value={
+                        'status': 'AVAILABLE', 'regime': 'UPTREND'}), \
+                    patch('maxtrade.training.train_shadow') as train:
+                now = datetime.now(timezone.utc)
+                disabled = research_once(root / 'history', root / 'missing', root / 'state', now)
+                train.assert_not_called()
+                self.assertFalse(disabled['training_enabled'])
+                train.side_effect = [ValueError('failed'), {'status': 'TRAINED SHADOW'}]
+                enabled = research_once(root / 'history', root / 'missing', root / 'state',
+                                        now, root / 'models.sqlite3')
+                self.assertEqual(train.call_count, 2)
+                self.assertTrue(enabled['model_trained'])
+                self.assertFalse(enabled['execution_enabled'])
+                self.assertEqual(enabled['markets']['BTC-USD']['training']['status'], 'UNAVAILABLE')
+                self.assertFalse((root / 'missing').exists())
+
     def test_worker_saves_frozen_prediction_quality(self):
         from maxtrade.history import ScanHistory
         quality = {'version': 'test-quality', 'mode': 'SHADOW ONLY'}

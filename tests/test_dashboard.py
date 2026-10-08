@@ -9,6 +9,20 @@ from maxtrade.settings import azure_openai_config, credential_status
 
 
 class DashboardTests(unittest.TestCase):
+    def test_chart_display_controls_are_grouped_and_preserve_preferences(self):
+        def render():
+            from maxtrade.chart_page import render_chart_controls
+            render_chart_controls()
+
+        app = AppTest.from_function(render).run()
+        self.assertFalse(app.exception)
+        self.assertTrue(any(item.label == 'Indicators & display' for item in app.expander))
+        self.assertEqual(app.selectbox(key='chart_theme').value, 'Light')
+        app.selectbox(key='chart_theme').select('Dark').run()
+        self.assertFalse(app.exception)
+        self.assertEqual(app.selectbox(key='chart_theme').value, 'Dark')
+        self.assertTrue(app.toggle(key='chart_signals').value)
+
     def test_chart_only_controls_preserve_selection_and_hide_dashboard_research(self):
         def render():
             from unittest.mock import patch

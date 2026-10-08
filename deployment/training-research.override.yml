@@ -1,0 +1,9 @@
+services:
+  research:
+    image: maxtrade-research:training-20261008
+    command:
+      - exec /opt/venv/bin/python -m scripts.research_worker --watch --database /app/data/historical.sqlite3 --ledger /app/data/scan_history.sqlite3 --state /app/research-state/research-status.json --training-registry /app/data/training/models.sqlite3
+    environment:
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"

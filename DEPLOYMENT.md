@@ -1,3 +1,36 @@
+# Compact Dashboard
+
+The dashboard uses a wider desktop workspace, compact typography and metrics,
+wrapping mobile columns, and persistent mobile bottom navigation. Chart display
+settings and past signal records are collapsed by default; saved preferences
+remain supported. New chart sessions default to Light. Price labels use two
+decimals above one unit and eight below; underlying data and exports are unchanged.
+Authentication, PAPER automation, kill-switch settings and risk checks are unchanged.
+
+# Shadow Training
+
+The research service can enable `--training-registry /app/data/training/models.sqlite3`.
+It trains a fixed scikit-learn logistic classifier on checksum-verified, completed
+1200-day Coinbase BTC/ETH USD datasets. Features are causal; labels are five-day
+long net returns with a one-day entry delay, 10bps fees and 5bps slippage per side.
+Three expanding chronological evaluation windows purge labels crossing train/test
+boundaries. Training and scaling use training rows only. Candidate hyperparameters
+are fixed; retrospective metrics do not establish improved accuracy.
+
+The owner-only SQLite registry stores immutable model versions, dataset hashes,
+weights, evaluation metrics and first-recorded forecasts. Identical datasets reuse
+the model; forecasts are scored only after their outcomes mature. Daily forecasts
+overlap, so their Brier score is descriptive, not an independent significance test.
+New completed daily datasets produce new shadow candidates on the six-hour refresh.
+Training errors are isolated and reported to the existing research monitor.
+
+Training never modifies the PAPER ledger, approvals, risk limits, prompts or Azure
+model weights. Azure remains the reviewer; Claude stays disabled until configured.
+Models do not approve/veto trades and are not automatically promoted. The artifacts
+`deployment/training.Dockerfile` and `deployment/training-research.override.yml`
+update only the research container; worker and dashboard releases are independent.
+Off-host backups remain deferred; the model registry is VM-local persistent data.
+
 # Publishing and hosting MaxTrade
 
 ## GitHub source repository

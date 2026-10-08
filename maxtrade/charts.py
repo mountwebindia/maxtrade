@@ -149,7 +149,7 @@ def candle_figure(candles: list[dict[str, Any]], analyses: list[TradeSignal],
                 figure.add_hline(y=level, line_width=1, line_dash="dot", line_color=grid, row=row, col=1)
             figure.update_yaxes(range=[0, 100], row=row, col=1)
         figure.update_yaxes(title_text=panel, row=row, col=1)
-    figure.update_layout(height=640, margin={"l": 8, "r": 16, "t": 36, "b": 90},
+    figure.update_layout(height=520, margin={"l": 8, "r": 16, "t": 36, "b": 90},
                          paper_bgcolor=background, plot_bgcolor=background,
                          font={"family": "IBM Plex Sans, sans-serif", "color": foreground, "size": 11},
                          legend={"orientation": "h", "y": -.12, "yanchor": "top", "x": 0}, dragmode="pan",

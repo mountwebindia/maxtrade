@@ -25,7 +25,7 @@ st.markdown(
     :root { --ink: #192b30; --muted: #64767b; --paper: #f3f6f8; --line: #dce5e8; --lime: #137b69; }
     .stApp { background: linear-gradient(180deg, #e8f0f3 0, var(--paper) 240px); color: var(--ink); }
     .stApp, .stApp input, .stApp button, .stApp select { font-family: 'IBM Plex Sans', sans-serif; letter-spacing: 0; }
-    .block-container { padding: 3.8rem 1.2rem 2rem; max-width: 1050px; }
+    .block-container { padding: 3.1rem 1.25rem 2rem; max-width: 1560px; }
     h1, h2, h3 { letter-spacing: 0 !important; }
     h3 { font-size: 1.25rem !important; }
     [data-testid="stTextInput"] input { min-height: 44px; }
@@ -107,8 +107,8 @@ st.markdown(
             .block-container { padding: 3.8rem .9rem 6rem; }
             .desk-title { font-size: 1.4rem; }
             .signal-grid { grid-template-columns: minmax(0, 1fr); }
-            [data-testid="stHorizontalBlock"] { flex-wrap: nowrap; gap: .5rem; }
-            [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] { min-width: 0 !important; flex: 1 1 0 !important; width: auto !important; }
+            [data-testid="stHorizontalBlock"] { flex-wrap: wrap; gap: .5rem; }
+            [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] { min-width: min(100%, 140px) !important; flex: 1 1 140px !important; width: auto !important; }
             [role="tablist"] { position: fixed; bottom: 0; left: 0; right: 0; z-index: 999; background: #fff; border-top: 1px solid var(--line); padding: .25rem .5rem calc(.25rem + env(safe-area-inset-bottom)); box-shadow: 0 -4px 18px #192b3008; }
             [data-baseweb="tab-highlight"], [data-baseweb="tab-border"], .react-aria-SelectionIndicator { display: none; }
             [role="tab"] { min-height: 58px; border-radius: 6px; font-size: .75rem; flex-direction: column; gap: .15rem; }
@@ -116,6 +116,55 @@ st.markdown(
             [role="tab"][aria-selected="true"] { background: #e1f2ed; color: #137b69; }
             button { min-height: 44px; }
         }
+    .stApp { background: linear-gradient(180deg, #edf2f4 0, #f7f9fa 160px); }
+    .stApp p, .stApp li, .stApp label, .stApp input { font-size: .8125rem; line-height: 1.5; }
+    .stApp h1 { font-size: 1.5rem; }
+    .stApp h2 { font-size: 1.125rem; }
+    .stApp h3 { font-size: 1rem !important; }
+    .stApp h4 { font-size: .875rem; }
+    .stApp h1, .stApp h2, .stApp h3, .stApp h4 { padding: .35rem 0; }
+    [data-testid="stVerticalBlock"] { gap: .5rem; }
+    .desk-header { padding: .25rem 0 .65rem; gap: .5rem; }
+    .brand-mark { flex-basis: 32px; height: 32px; border-radius: 6px; }
+    .brand-mark .app-icon { font-size: 22px; }
+    .desk-title { font-size: 1.25rem; }
+    .desk-subtitle { margin-top: .1rem; font-size: .6875rem; }
+    .stApp button { min-height: 36px; border-radius: 4px; }
+    [data-testid="stButton"] button[kind="primary"] { min-height: 38px; }
+    [data-testid="stSelectbox"] [data-baseweb="select"] > div { min-height: 38px; border-radius: 4px; }
+    [data-testid="stRadio"] [data-testid="stRadioOption"] { min-height: 36px; padding: .3rem .5rem; border-radius: 4px; }
+    [data-testid="stMetric"] { background: transparent !important; border: 0 !important; border-left: 2px solid var(--line) !important; padding: .25rem .65rem !important; border-radius: 0 !important; min-width: 0; }
+    [data-testid="stMetricValue"] { font-size: 1.125rem !important; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+    [data-testid="stMetricLabel"] p { font-size: .6875rem; color: var(--muted); white-space: normal; }
+    [data-testid="stMetricDelta"] { font-size: .6875rem; }
+    [data-testid="stCaptionContainer"] p { font-size: .6875rem; }
+    [data-testid="stAlert"] { padding: .5rem .65rem; border-radius: 4px; }
+    [data-testid="stAlert"] p { font-size: .75rem; }
+    [data-testid="stExpander"] summary { min-height: 38px; padding: .35rem .65rem; }
+    [data-testid="stExpander"] summary p { font-size: .8125rem; font-weight: 500; }
+    [data-testid="stDataFrame"] { border-radius: 4px; }
+    .st-key-navigation > [role="tablist"], .st-key-navigation [role="tablist"] { gap: .25rem; }
+    [role="tab"] { min-height: 40px; border-radius: 4px; }
+    [role="tab"] p { font-size: .8125rem; }
+    .signal-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); }
+    .signal-card { padding: .65rem; border-radius: 6px; }
+    .card-price { font-size: 1.125rem; margin: .4rem 0; font-variant-numeric: tabular-nums; }
+    .summary { padding: .5rem 0; }
+    .summary strong { font-size: 1rem; }
+    .stApp [data-testid="stMarkdownContainer"] { overflow-wrap: anywhere; }
+    @media (max-width: 640px) {
+        .block-container { padding: 3.1rem .65rem 6rem; }
+        .desk-title { font-size: 1.125rem; }
+        .desk-brand { gap: .5rem; }
+        [data-testid="stMetricValue"] { font-size: 1rem !important; }
+        .stApp button, [data-testid="stButton"] button[kind="primary"],
+        [data-testid="stSelectbox"] [data-baseweb="select"] > div,
+        [data-testid="stRadio"] [data-testid="stRadioOption"],
+        [data-testid="stExpander"] summary { min-height: 44px; }
+        [role="tab"] { min-height: 54px; }
+        [role="tab"] p { font-size: .6875rem; }
+        [data-testid="stPlotlyChart"] { overflow: hidden; }
+    }
     </style>
     <div class="desk-header"><div class="desk-brand"><div class="brand-mark" aria-hidden="true"><span class="app-icon">candlestick_chart</span></div><div><div class="desk-title">MaxTrade</div>
     <div class="desk-subtitle">CoinDCX / Deribit</div></div></div><span class="research-status">Research only</span></div>

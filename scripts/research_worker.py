@@ -13,14 +13,16 @@ from maxtrade.historical_features import historical_context
 from maxtrade.quality import forward_validation
 
 
-def research_once(database: Path, ledger: Path, state: Path, now: datetime) -> dict:
+def research_once(database: Path, ledger: Path, state: Path, now: datetime,
+                  training_registry: Path | None = None) -> dict:
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError('Research requires timezone-aware time')
     end = int(now.timestamp()) // 86400 * 86400
     report = {'generated': now.isoformat(), 'mode': 'SHADOW ONLY',
               'execution_enabled': False, 'model_trained': False,
               'markets': {}, 'failures': 0,
-              'limitations': ['No automatic policy promotion or model weight updates',
+              'training_enabled': training_registry is not None,
+              'limitations': ['No automatic policy promotion or Azure model weight updates',
                               'Recent Coinbase USD coverage does not certify CoinDCX paper execution',
                               'Previously observed holdout is not new untouched evaluation data']}
     for product in ('BTC-USD', 'ETH-USD'):
@@ -43,6 +45,18 @@ def research_once(database: Path, ledger: Path, state: Path, now: datetime) -> d
             market['daily_context'] = {'status': 'UNAVAILABLE'}
             report['failures'] += 1
         report['markets'][product] = market
+        if training_registry is not None:
+            try:
+                from maxtrade.training import train_shadow
+                market['training'] = train_shadow(database, training_registry, product,
+                                                   end - 1200 * 86400, end,
+                                                   datetime.now(timezone.utc))
+            except Exception as error:
+                market['training'] = {'status': 'UNAVAILABLE', 'error_type': type(error).__name__,
+                                      'execution_enabled': False, 'promotion_allowed': False}
+                report['failures'] += 1
+    report['model_trained'] = any(market.get('training', {}).get('status') == 'TRAINED SHADOW'
+                                  for market in report['markets'].values())
     try:
         with sqlite3.connect(f'{ledger.resolve().as_uri()}?mode=ro', uri=True, timeout=5) as connection:
             connection.row_factory = sqlite3.Row
@@ -76,6 +90,8 @@ def main() -> None:
     parser.add_argument('--ledger', type=Path, required=True)
     parser.add_argument('--state', type=Path, required=True)
     parser.add_argument('--watch', action='store_true')
+    parser.add_argument('--training-registry', type=Path,
+                        help='Enable shadow-only statistical training; never changes paper policy')
     arguments = parser.parse_args()
     arguments.database.parent.mkdir(parents=True, exist_ok=True)
     lock = arguments.database.with_suffix('.research.lock').open('a')
@@ -86,7 +102,7 @@ def main() -> None:
     while True:
         try:
             report = research_once(arguments.database, arguments.ledger, arguments.state,
-                                   datetime.now(timezone.utc))
+                                   datetime.now(timezone.utc), arguments.training_registry)
             print(f"Research cycle completed: failures={report['failures']}; {report['learning_status']}",
                   flush=True)
         except Exception:

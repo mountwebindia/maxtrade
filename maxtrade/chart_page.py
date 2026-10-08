@@ -127,20 +127,22 @@ def render_chart_controls(workspace: bool = False) -> tuple[str, str, str, bool]
                           key=f"chart_market_{product}")
         pair = catalog[market]
         st.caption(f"CoinDCX · {product.lower()} · {market}")
-    toolbar = st.columns(3)
-    toolbar[0].selectbox("Chart style", ["Candles", "Line", "Area"], key="chart_style")
-    toolbar[1].selectbox("Chart theme", ["Dark", "Light"], key="chart_theme")
-    toolbar[2].selectbox("Visible candles", [80, 40, 120], key="chart_visible")
-    st.multiselect("Indicators", CHART_INDICATORS,
-                   default=["EMA 20", "EMA 50", "Volume", "RSI 14"], key="chart_indicators")
-    st.toggle("Log price scale", key="chart_log")
-    st.toggle('BUY / SELL setups', value=True, key='chart_signals')
-    st.toggle('Saved paper fills', value=True, key='chart_paper_fills')
-    st.selectbox('Time window', ['Latest candles', 'All loaded candles', 'Custom UTC range'], key='chart_window')
-    if st.session_state['chart_window'] == 'Custom UTC range':
-        dates = st.columns(2)
-        dates[0].text_input('From (UTC)', placeholder='2026-10-07T00:00:00+00:00', key='chart_from')
-        dates[1].text_input('To (UTC)', placeholder='2026-10-07T12:00:00+00:00', key='chart_to')
+    with st.expander('Indicators & display', icon=':material/tune:'):
+        toolbar = st.columns(3)
+        toolbar[0].selectbox("Chart style", ["Candles", "Line", "Area"], key="chart_style")
+        toolbar[1].selectbox("Chart theme", ["Light", "Dark"], key="chart_theme")
+        toolbar[2].selectbox("Visible candles", [80, 40, 120], key="chart_visible")
+        st.multiselect("Indicators", CHART_INDICATORS,
+                       default=["EMA 20", "EMA 50", "Volume", "RSI 14"], key="chart_indicators")
+        toggles = st.columns(3)
+        toggles[0].toggle("Log price scale", key="chart_log")
+        toggles[1].toggle('BUY / SELL setups', value=True, key='chart_signals')
+        toggles[2].toggle('Saved paper fills', value=True, key='chart_paper_fills')
+        st.selectbox('Time window', ['Latest candles', 'All loaded candles', 'Custom UTC range'], key='chart_window')
+        if st.session_state['chart_window'] == 'Custom UTC range':
+            dates = st.columns(2)
+            dates[0].text_input('From (UTC)', placeholder='2026-10-07T00:00:00+00:00', key='chart_from')
+            dates[1].text_input('To (UTC)', placeholder='2026-10-07T12:00:00+00:00', key='chart_to')
     preferences = {key: st.session_state[key] for key in ('chart_style', 'chart_theme', 'chart_visible',
                    'chart_indicators', 'chart_log', 'chart_signals', 'chart_paper_fills')}
     url = chart_workspace_url(product, pair, interval, preferences)
@@ -175,7 +177,7 @@ def render_trade_status(product: str, pair: str, latest, stale: bool) -> None:
         columns = st.columns(3)
         for column, label, value in zip(columns, ("Research entry", "Stop", "Target"),
                                         (latest.entry, latest.stop, latest.target)):
-            column.metric(label, display_number(value))
+            column.metric(label, display_number(value, 2 if value is not None and abs(value) >= 1 else 8))
         if latest.action == 'LONG':
             st.caption('Setup invalidation: next completed candle fails price > EMA20 > EMA50 or RSI 50-70. Paper stop remains the saved position stop.')
         else:
@@ -186,7 +188,7 @@ def render_trade_status(product: str, pair: str, latest, stale: bool) -> None:
         now = datetime.now(timezone.utc)
         account = ledger.account(now)
         enabled = ledger.automation_enabled()
-        st.write(f"Paper automation: {'ENABLED' if enabled else 'PAUSED'} | "
+        st.caption(f"Paper automation: {'ENABLED' if enabled else 'PAUSED'} | "
                  f"Kill switch: {'ON' if account['kill_switch'] else 'OFF'} | "
                  f"Position slot: {'OCCUPIED' if account['occupied'] else 'FREE'}")
         history = ScanHistory(ledger.path)
@@ -290,11 +292,11 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
     st.caption(f"Last closed candle {close_time.isoformat(timespec='minutes')} · fetched {snapshot['fetched']}")
     display_candles = snapshot["display_candles"]
     forming = int(display_candles[-1]["time"]) > int(candles[-1]["time"])
-    st.caption(f"{'Auto-refresh · 10s' if live else 'Paused snapshot'} · Last price {display_number(display_candles[-1]['close'])} · {'Forming candle' if forming else 'No forming candle from feed'}")
+    st.caption(f"{'Auto-refresh · 10s' if live else 'Paused snapshot'} · Last price {display_number(display_candles[-1]['close'], 2 if abs(display_candles[-1]['close']) >= 1 else 8)} · {'Forming candle' if forming else 'No forming candle from feed'}")
     last = display_candles[-1]
     metrics = st.columns(4)
     for column, field in zip(metrics, ("open", "high", "low", "close")):
-        column.metric(field.upper(), display_number(last[field]))
+        column.metric(field.upper(), display_number(last[field], 2 if abs(last[field]) >= 1 else 8))
     style = st.session_state.get("chart_style", "Candles")
     theme = st.session_state.get("chart_theme", "Dark")
     indicators = tuple(st.session_state.get("chart_indicators", ["EMA 20", "EMA 50", "Volume", "RSI 14"]))
@@ -330,7 +332,7 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
         except ValueError as error:
             st.warning(f'Custom time range unavailable: {error}')
     if workspace:
-        figure.update_layout(height=800)
+        figure.update_layout(height=620)
     st.plotly_chart(figure,
                     width="stretch", config={"displaylogo": False, "scrollZoom": True,
                                               "displayModeBar": True,
@@ -348,7 +350,7 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
                            mime='text/csv', icon=':material/download:', key='chart_csv')
         return
     st.caption('Arrows: completed-candle technical setups, not executed trades. Spot SELL is bearish research, not a short order. Diamonds/crosses: saved paper entry/exit on this database only.')
-    with st.expander('Past signal records', expanded=True):
+    with st.expander('Past signal records', expanded=False):
         st.caption('Recomputed from loaded completed candles only; not a contemporaneously saved recommendation. First warm-up setup is excluded. Options labels describe underlying bias, not option premium.')
         if records:
             table = pd.DataFrame(records).drop(columns=['Marker price']).iloc[::-1]
