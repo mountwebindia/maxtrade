@@ -82,14 +82,26 @@ class DashboardTests(unittest.TestCase):
             st.session_state['chart_paper_fills'] = False
             with patch('maxtrade.chart_page.require_chart_login'), patch('maxtrade.chart_page.DeribitClient') as client:
                 client.return_value.underlying_candles.return_value = bars
+                cached = 'chart_snapshot' in st.session_state
                 render_chart_snapshot('Options', '5m', 'BTC', False, workspace=True)
-                client.return_value.underlying_candles.assert_called_once_with('BTC', '5m', include_open=True)
+                if cached:
+                    client.return_value.underlying_candles.assert_not_called()
+                else:
+                    client.return_value.underlying_candles.assert_called_once_with('BTC', '5m', include_open=True)
                 client.return_value.futures_candles.assert_not_called()
                 client.return_value.instruments.assert_not_called()
         app = AppTest.from_function(render).run(timeout=15)
         self.assertFalse(app.exception)
         self.assertFalse(app.error)
         self.assertFalse(any(item.value == 'Trade decision' for item in app.subheader))
+        app.button(key='chart_zoom_in').click().run(timeout=15)
+        self.assertFalse(app.exception)
+        self.assertEqual(app.session_state['chart_price_zoom'], 1.25)
+        app.button(key='chart_zoom_out').click().run(timeout=15)
+        self.assertEqual(app.session_state['chart_price_zoom'], 1.0)
+        app.button(key='chart_zoom_in').click().run(timeout=15)
+        app.button(key='chart_zoom_reset').click().run(timeout=15)
+        self.assertEqual(app.session_state['chart_price_zoom'], 1.0)
 
     def test_chart_workspace_url_contains_only_selection_and_layout(self):
         import json

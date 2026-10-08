@@ -50,17 +50,42 @@ class SignalTests(unittest.TestCase):
         figure = candle_figure(candles, analyses, "1h")
         self.assertEqual(figure.data[0].type, "candlestick")
         self.assertEqual(len(figure.data[0].x), len(candles))
-        self.assertEqual(len(figure.layout.shapes), 3)
+        self.assertEqual(len(figure.layout.shapes), 4)
         self.assertIn("Volume", [trace.name for trace in figure.data])
         self.assertFalse(any(trace.mode == "markers" for trace in figure.data if trace.type == "scatter"))
         options_figure = candle_figure(candles, analyses, "1h", options=True)
-        self.assertEqual(len(options_figure.layout.shapes), 3)
+        self.assertEqual(len(options_figure.layout.shapes), 4)
         self.assertNotIn("CALL", [trace.name for trace in options_figure.data])
         clean = candle_figure(candles, analyses, "1h", chart_type="Line", indicators=(), theme="Light", logarithmic=True)
         self.assertEqual(len(clean.data), 1)
         self.assertEqual(clean.data[0].type, "scatter")
         self.assertEqual(clean.layout.yaxis.type, "log")
-        self.assertFalse(clean.layout.shapes)
+        self.assertEqual(clean.layout.shapes[0].name, 'Last price 109.40')
+
+    def test_chart_levels_and_vertical_zoom_are_price_only(self):
+        candles = make_candles([100 + index * .1 for index in range(90)])
+        for index, candle in enumerate(candles):
+            candle['time'] = index * 3600000
+        analyses = chart_analysis(candles, '1h', True)
+        positions = [{'id': 7, 'state': 'OPEN', 'entry': 105, 'stop': 95, 'target': 120},
+                     {'id': 8, 'state': 'CLOSED', 'stop': 1, 'target': 999},
+                     {'id': 9, 'state': 'PENDING', 'stop': 2, 'target': 998}]
+        for logarithmic in (False, True):
+            with self.subTest(logarithmic=logarithmic):
+                base = candle_figure(candles, analyses, '1h', signals=[], paper_positions=positions,
+                                     logarithmic=logarithmic)
+                zoom = candle_figure(candles, analyses, '1h', signals=[], paper_positions=positions,
+                                     logarithmic=logarithmic, price_zoom=2)
+                names = [shape.name for shape in base.layout.shapes if shape.showlegend]
+                self.assertIn('PAPER #7 Take profit 120.00', names)
+                self.assertIn('PAPER #7 Stop loss 95.00', names)
+                self.assertFalse(any('#8' in name or '#9' in name for name in names))
+                self.assertEqual(base.layout.xaxis.range, zoom.layout.xaxis.range)
+                self.assertEqual(base.layout.yaxis3.range, zoom.layout.yaxis3.range)
+                self.assertAlmostEqual(base.layout.yaxis.range[1] - base.layout.yaxis.range[0],
+                                       2 * (zoom.layout.yaxis.range[1] - zoom.layout.yaxis.range[0]))
+        with self.assertRaisesRegex(ValueError, 'Price zoom'):
+            candle_figure(candles, analyses, '1h', price_zoom=0)
 
     def test_extended_indicators_exclude_forming_candle(self):
         candles = make_candles([100 + index * .1 for index in range(240)])

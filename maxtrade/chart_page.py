@@ -310,6 +310,23 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
         for column, field in zip(metrics, ("open", "high", "low", "close")):
             column.metric(field.upper(), display_number(last[field], 2 if abs(last[field]) >= 1 else 8))
     style = st.session_state.get("chart_style", "Candles")
+    if st.session_state.get('chart_zoom_selection') != selection:
+        st.session_state['chart_zoom_selection'] = selection
+        st.session_state['chart_price_zoom'] = 1.0
+    st.markdown('<style>.st-key-chart_price_controls [data-testid="stHorizontalBlock"] {flex-wrap:nowrap !important;}'
+                '.st-key-chart_price_controls [data-testid="stColumn"] {min-width:0 !important;flex:1 1 0 !important;}'
+                '</style>', unsafe_allow_html=True)
+    with st.container(width=200, key='chart_price_controls'):
+        zoom_controls = st.columns(3)
+    if zoom_controls[0].button('', icon=':material/zoom_in:', help='Zoom in vertically', key='chart_zoom_in',
+                               width='stretch', disabled=st.session_state['chart_price_zoom'] >= 8):
+        st.session_state['chart_price_zoom'] = min(8.0, st.session_state['chart_price_zoom'] * 1.25)
+    if zoom_controls[1].button('', icon=':material/zoom_out:', help='Zoom out vertically', key='chart_zoom_out',
+                               width='stretch', disabled=st.session_state['chart_price_zoom'] <= .25):
+        st.session_state['chart_price_zoom'] = max(.25, st.session_state['chart_price_zoom'] / 1.25)
+    if zoom_controls[2].button('', icon=':material/fit_screen:', help='Reset price scale', key='chart_zoom_reset',
+                               width='stretch'):
+        st.session_state['chart_price_zoom'] = 1.0
     theme = st.session_state.get("chart_theme", "Dark")
     indicators = tuple(st.session_state.get("chart_indicators", ["EMA 20", "EMA 50", "Volume", "RSI 14"]))
     logarithmic = st.session_state.get("chart_log", False)
@@ -326,12 +343,15 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
                            chart_type=style, indicators=indicators, theme=theme,
                            logarithmic=logarithmic, visible_bars=visible,
                            signals=records if st.session_state.get('chart_signals', True) else None,
-                           paper_positions=paper_positions)
+                           paper_positions=paper_positions,
+                           price_zoom=st.session_state['chart_price_zoom'])
     figure.update_layout(uirevision=repr((selection, style, indicators, logarithmic, visible)),
                           editrevision="|".join(selection))
     window = st.session_state.get('chart_window', 'Latest candles')
     figure.update_layout(uirevision=repr((selection, style, indicators, logarithmic, visible,
                                           window, st.session_state.get('chart_from'), st.session_state.get('chart_to'))))
+    figure.update_yaxes(uirevision=repr((selection, style, logarithmic, visible,
+                                        st.session_state['chart_price_zoom'])), row=1, col=1)
     if window == 'All loaded candles':
         figure.update_xaxes(autorange=True)
     elif window == 'Custom UTC range':
