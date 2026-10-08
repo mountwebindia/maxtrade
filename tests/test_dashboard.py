@@ -9,6 +9,29 @@ from maxtrade.settings import azure_openai_config, credential_status
 
 
 class DashboardTests(unittest.TestCase):
+    def test_settings_prioritize_paper_account_and_group_connections(self):
+        import streamlit as st
+
+        with patch('maxtrade.auth.require_login'), \
+                patch('maxtrade.research.render_paper_account', side_effect=lambda: st.markdown('#### Paper account')), \
+                patch('maxtrade.azure_ai.render_azure_settings', side_effect=lambda: st.button('Test Azure connection', key='azure_test')), \
+                patch('maxtrade.notifications.render_telegram_settings', side_effect=lambda: st.button('Test Telegram delivery', key='telegram_test')), \
+                patch('maxtrade.history.ScanHistory'):
+            app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / 'app.py')).run()
+            self.assertFalse(app.exception)
+            labels = [item.label for item in app.expander]
+            for label in ('AI research', 'Telegram alerts', 'Exchange configuration'):
+                self.assertIn(label, labels)
+            headings = [item.value for item in app.markdown]
+            self.assertLess(headings.index('#### Paper account'), headings.index('#### Connections'))
+            self.assertEqual(app.button(key='azure_test').label, 'Test Azure connection')
+            self.assertEqual(app.button(key='telegram_test').label, 'Test Telegram delivery')
+            styles = headings[0]
+            self.assertIn('.st-key-navigation [role="tablist"] { position: fixed;', styles)
+            self.assertNotIn('\n            [role="tablist"] { position: fixed;', styles)
+            self.assertIn('.st-key-login_form { max-width: 440px;', styles)
+            self.assertNotIn('[data-testid="stForm"] { max-width: 440px;', styles)
+
     def test_chart_display_controls_are_grouped_and_preserve_preferences(self):
         def render():
             from maxtrade.chart_page import render_chart_controls
@@ -34,9 +57,17 @@ class DashboardTests(unittest.TestCase):
         app.query_params.update({'view': 'chart', 'product': 'Options', 'pair': 'ETH', 'interval': '15m'})
         app.run(timeout=15)
         self.assertFalse(app.exception)
-        self.assertEqual(app.selectbox(key='chart_interval').value, '15m')
+        self.assertEqual(app.radio(key='chart_interval').value, '15m')
         self.assertEqual(app.selectbox(key='chart_underlying').value, 'ETH')
-        self.assertEqual(app.expander[0].label, 'Chart settings')
+        self.assertNotIn('Chart settings', [item.label for item in app.expander])
+        app.radio(key='chart_interval').set_value('5m').run()
+        self.assertFalse(app.exception)
+        self.assertEqual(app.query_params['interval'], '5m')
+        app.radio(key='chart_interval').set_value('Custom').run()
+        app.selectbox(key='chart_custom_minutes').select(120).run()
+        self.assertFalse(app.exception)
+        self.assertEqual(app.query_params['interval'], '120m')
+        self.assertEqual(app.selectbox(key='chart_underlying').value, 'ETH')
 
     def test_options_minute_workspace_uses_underlying_feed_without_research(self):
         def render():

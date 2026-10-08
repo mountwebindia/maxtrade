@@ -357,11 +357,12 @@ def render_paper_account() -> None:
         account = ledger.account(datetime.now(timezone.utc))
         enabled = ledger.automation_enabled()
         st.write(f"Autonomous paper mode: {'RUNNING POLICY' if enabled else 'PAUSED'}")
-        if st.button("Pause paper automation" if enabled else "Start paper automation",
-                     icon=":material/pause:" if enabled else ":material/play_arrow:", key="paper_automation"):
+        actions = st.columns(2)
+        if actions[0].button("Pause paper automation" if enabled else "Start paper automation",
+                     icon=":material/pause:" if enabled else ":material/play_arrow:", key="paper_automation", width="stretch"):
             ledger.set_automation(not enabled)
             st.rerun()
-        if st.button("Run autonomous research cycle", icon=":material/radar:", key="paper_cycle", disabled=not enabled):
+        if actions[1].button("Run research cycle", icon=":material/radar:", key="paper_cycle", disabled=not enabled, width="stretch"):
             from maxtrade.worker import run_once
             from maxtrade.settings import azure_openai_config, telegram_config
             configuration = None

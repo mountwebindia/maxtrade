@@ -27,34 +27,13 @@ def chart_workspace_url(product: str, pair: str, interval: str, preferences: dic
 def render_chart_page(workspace: bool = False) -> None:
     if workspace:
         st.markdown('<style>.block-container {max-width: none; padding: 1rem;} .desk-header {display:none;} header[data-testid="stHeader"] {display:none;}</style>', unsafe_allow_html=True)
-        with st.expander('Chart settings', expanded=False, icon=':material/tune:'):
-            product, interval, pair, live = render_chart_controls(workspace)
-    else:
-        product, interval, pair, live = render_chart_controls(workspace)
+    product, interval, pair, live = render_chart_controls(workspace)
     st.fragment(run_every='10s' if live else None)(render_chart_snapshot)(product, interval, pair, live, workspace)
     if not workspace:
         render_market_research(product, pair)
 
 
 def render_chart_controls(workspace: bool = False) -> tuple[str, str, str, bool]:
-    with st.expander('Chart layout', expanded=False):
-        uploaded = st.file_uploader('Load saved layout', type=['json'], key='chart_layout_upload', max_upload_size=1)
-        if uploaded is not None and st.session_state.get('chart_layout_imported') != uploaded.getvalue():
-            try:
-                document = json.loads(uploaded.getvalue())
-                preferences = document['preferences']
-                if not isinstance(preferences, dict):
-                    raise ValueError('Invalid chart layout')
-                st.query_params['layout'] = json.dumps(preferences)
-                st.session_state.pop('chart_route_loaded', None)
-                st.session_state['chart_layout_imported'] = uploaded.getvalue()
-                if not workspace:
-                    for key in ('chart_style', 'chart_theme', 'chart_visible', 'chart_indicators',
-                                'chart_log', 'chart_signals', 'chart_paper_fills'):
-                        st.session_state.pop(key, None)
-                st.rerun()
-            except (ValueError, KeyError, TypeError):
-                st.error('Invalid saved chart layout.')
     if (workspace or 'layout' in st.query_params) and not st.session_state.get('chart_route_loaded'):
         product = st.query_params.get('product', 'Spot')
         interval = st.query_params.get('interval', '1h')
@@ -88,20 +67,30 @@ def render_chart_controls(workspace: bool = False) -> tuple[str, str, str, bool]
         st.session_state['chart_route_loaded'] = True
     if workspace:
         st.markdown('<style>.block-container {max-width: none; padding: 1rem;} .desk-header {display:none;} header[data-testid="stHeader"] {display:none;}</style>', unsafe_allow_html=True)
-    product = st.radio("Chart market type", ["Spot", "Futures", "Options"], horizontal=True,
+    st.markdown('''<style>
+        .st-key-chart_interval [role="radiogroup"], .st-key-chart_product [role="radiogroup"] {flex-wrap:wrap !important; gap: .35rem;}
+        .st-key-chart_interval [role="radiogroup"] > div, .st-key-chart_product [role="radiogroup"] > div {flex: 0 0 auto !important; min-width: 44px !important;}
+        .st-key-chart_interval [data-testid="stRadioOption"], .st-key-chart_product [data-testid="stRadioOption"] {min-height: 44px; padding: 0 .65rem; width: auto !important;}
+        .st-key-chart_interval [data-testid="stRadioOption"] p, .st-key-chart_product [data-testid="stRadioOption"] p {white-space: nowrap;}
+        .st-key-chart_refresh button {min-height: 40px;}
+        </style>''', unsafe_allow_html=True)
+    header = st.columns([3, 2])
+    product = header[0].radio("Chart market type", ["Spot", "Futures", "Options"], horizontal=True,
                        label_visibility="collapsed", key="chart_product", width="stretch")
-    controls = st.columns(2)
-    intervals = ['1h', '4h', '1m', '5m', '15m', '30m', '1d', 'Custom']
-    interval = controls[0].selectbox("Chart timeframe", intervals, key="chart_interval")
+    live = header[1].toggle("Live updates · 10s", value=True, key="chart_live")
+    intervals = ['1m', '5m', '15m', '30m', '1h', '4h', '1d', 'Custom']
+    interval = st.radio("Chart timeframe", intervals, index=4, horizontal=True,
+                        key="chart_interval", width="stretch")
     if interval == 'Custom':
-        minutes = controls[0].selectbox('Custom interval (minutes)', [2, 3, 45, 120, 180], key='chart_custom_minutes')
+        minutes = st.selectbox('Custom interval (minutes)', [2, 3, 45, 120, 180], key='chart_custom_minutes')
         interval = f'{minutes}m'
+    controls = st.columns([3, 1])
     if product == "Options":
-        market = controls[1].selectbox("Chart underlying", ["BTC", "ETH"], key="chart_underlying")
+        market = controls[0].selectbox("Chart underlying", ["BTC", "ETH"], key="chart_underlying")
         pair = market
         st.caption(f"Deribit · {market}-PERPETUAL · USD underlying, not option premium")
     else:
-        if st.button("Browse markets", icon=":material/search:", key="chart_browse"):
+        if controls[1].button("Browse markets", icon=":material/search:", key="chart_browse"):
             client = CoinDCXClient()
             try:
                 with st.spinner("Loading active markets…"):
@@ -123,11 +112,12 @@ def render_chart_controls(workspace: bool = False) -> tuple[str, str, str, bool]
         catalog = st.session_state.get(f"chart_catalog_{product}", default_catalog)
         names = sorted(catalog)
         preferred = "BTCUSDT" if product == "Spot" else "B-BTC_USDT"
-        market = controls[1].selectbox("Chart market", names, index=names.index(preferred) if preferred in names else 0,
+        market = controls[0].selectbox("Chart market", names, index=names.index(preferred) if preferred in names else 0,
                           key=f"chart_market_{product}")
         pair = catalog[market]
         st.caption(f"CoinDCX · {product.lower()} · {market}")
-    with st.expander('Indicators & display', icon=':material/tune:'):
+    display_controls, layout_controls = st.columns(2)
+    with display_controls.expander('Indicators & display', icon=':material/tune:'):
         toolbar = st.columns(3)
         toolbar[0].selectbox("Chart style", ["Candles", "Line", "Area"], key="chart_style")
         toolbar[1].selectbox("Chart theme", ["Light", "Dark"], key="chart_theme")
@@ -146,15 +136,33 @@ def render_chart_controls(workspace: bool = False) -> tuple[str, str, str, bool]
     preferences = {key: st.session_state[key] for key in ('chart_style', 'chart_theme', 'chart_visible',
                    'chart_indicators', 'chart_log', 'chart_signals', 'chart_paper_fills')}
     url = chart_workspace_url(product, pair, interval, preferences)
-    tools = st.columns(2)
-    tools[0].link_button('Open chart in new tab', url, icon=':material/open_in_new:', width='stretch')
-    if st.button('Save layout to URL', icon=':material/bookmark:', key='chart_bookmark'):
+    if workspace:
         st.query_params.update({'product': product, 'pair': pair, 'interval': interval,
                                 'layout': json.dumps(preferences)})
-    tools[1].download_button('Save layout', json.dumps({'url': url, 'preferences': preferences}, indent=2),
-                             file_name='maxtrade-chart-layout.json', mime='application/json',
-                             icon=':material/save:', key='chart_layout_download', width='stretch')
-    live = st.toggle("Live updates · 10s", value=True, key="chart_live")
+    with layout_controls.expander('Chart layout', expanded=False, icon=':material/save:'):
+        tools = st.columns(2)
+        tools[0].link_button('Open chart in new tab', url, icon=':material/open_in_new:', width='stretch')
+        if st.button('Save layout to URL', icon=':material/bookmark:', key='chart_bookmark'):
+            st.query_params.update({'product': product, 'pair': pair, 'interval': interval,
+                                    'layout': json.dumps(preferences)})
+        tools[1].download_button('Save layout', json.dumps({'url': url, 'preferences': preferences}, indent=2),
+                                 file_name='maxtrade-chart-layout.json', mime='application/json',
+                                 icon=':material/save:', key='chart_layout_download', width='stretch')
+        uploaded = st.file_uploader('Load saved layout', type=['json'], key='chart_layout_upload', max_upload_size=1)
+        if uploaded is not None and st.session_state.get('chart_layout_imported') != uploaded.getvalue():
+            try:
+                document = json.loads(uploaded.getvalue())
+                imported = document['preferences']
+                if not isinstance(imported, dict):
+                    raise ValueError('Invalid chart layout')
+                st.query_params['layout'] = json.dumps(imported)
+                st.session_state.pop('chart_route_loaded', None)
+                st.session_state['chart_layout_imported'] = uploaded.getvalue()
+                for key in preferences:
+                    st.session_state.pop(key, None)
+                st.rerun()
+            except (ValueError, KeyError, TypeError):
+                st.error('Invalid saved chart layout.')
     return product, interval, pair, live
 
 
@@ -242,7 +250,7 @@ def render_trade_status(product: str, pair: str, latest, stale: bool) -> None:
 def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, workspace: bool = False) -> None:
     require_chart_login()
     selection = (product, interval, pair)
-    refresh = st.button("Refresh chart", type="primary", icon=":material/refresh:", width="stretch", key="chart_refresh")
+    refresh = st.button("Refresh chart", icon=":material/refresh:", key="chart_refresh")
     previous = st.session_state.get("chart_snapshot")
     if refresh or live or not previous or previous["selection"] != selection:
         st.session_state.pop("chart_snapshot", None)
@@ -294,9 +302,13 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
     forming = int(display_candles[-1]["time"]) > int(candles[-1]["time"])
     st.caption(f"{'Auto-refresh · 10s' if live else 'Paused snapshot'} · Last price {display_number(display_candles[-1]['close'], 2 if abs(display_candles[-1]['close']) >= 1 else 8)} · {'Forming candle' if forming else 'No forming candle from feed'}")
     last = display_candles[-1]
-    metrics = st.columns(4)
-    for column, field in zip(metrics, ("open", "high", "low", "close")):
-        column.metric(field.upper(), display_number(last[field], 2 if abs(last[field]) >= 1 else 8))
+    if workspace:
+        st.caption(' · '.join(f"{field.upper()} {display_number(last[field], 2 if abs(last[field]) >= 1 else 8)}"
+                             for field in ('open', 'high', 'low', 'close')))
+    else:
+        metrics = st.columns(4)
+        for column, field in zip(metrics, ("open", "high", "low", "close")):
+            column.metric(field.upper(), display_number(last[field], 2 if abs(last[field]) >= 1 else 8))
     style = st.session_state.get("chart_style", "Candles")
     theme = st.session_state.get("chart_theme", "Dark")
     indicators = tuple(st.session_state.get("chart_indicators", ["EMA 20", "EMA 50", "Volume", "RSI 14"]))

@@ -29,7 +29,8 @@ st.markdown(
     h1, h2, h3 { letter-spacing: 0 !important; }
     h3 { font-size: 1.25rem !important; }
     [data-testid="stTextInput"] input { min-height: 44px; }
-    [data-testid="stForm"] { max-width: 440px; margin: .5rem auto; border-radius: 8px; background: #fff; padding: 1.25rem; }
+    .st-key-login_form { max-width: 440px; margin: .5rem auto; border-radius: 8px; background: #fff; padding: 1.25rem; }
+    .st-key-paper_settings { max-width: 640px; border: 0; border-top: 1px solid var(--line); border-radius: 0; padding: .65rem 0; }
     [data-testid="stSidebar"] { background: #fff; border-right: 1px solid var(--line); }
     [data-testid="stSidebar"] [data-testid="stSidebarContent"] { padding-top: 1rem; }
     [data-testid="stSidebar"] .desk-header { padding-bottom: 1.2rem; margin-bottom: 1rem; }
@@ -91,10 +92,10 @@ st.markdown(
         [role="tablist"] { gap: .4rem; border-bottom: 1px solid var(--line); padding-bottom: .4rem; }
         [role="tab"] { flex: 1; min-height: 48px; justify-content: center; gap: .5rem; border-radius: 6px; color: var(--muted); }
         [role="tab"]::before { font-family: 'Material Symbols Rounded'; font-size: 23px; font-weight: normal; line-height: 1; }
-        [role="tab"]:nth-child(1)::before { content: 'radar' / ''; }
-        [role="tab"]:nth-child(2)::before { content: 'candlestick_chart' / ''; }
-        [role="tab"]:nth-child(3)::before { content: 'history' / ''; }
-        [role="tab"]:nth-child(4)::before { content: 'tune' / ''; }
+        .st-key-navigation [role="tab"]:nth-child(1)::before { content: 'radar' / ''; }
+        .st-key-navigation [role="tab"]:nth-child(2)::before { content: 'candlestick_chart' / ''; }
+        .st-key-navigation [role="tab"]:nth-child(3)::before { content: 'history' / ''; }
+        .st-key-navigation [role="tab"]:nth-child(4)::before { content: 'tune' / ''; }
         [role="tab"][aria-selected="true"] { background: #e1f2ed; color: #137b69; }
         [role="tab"]:focus-visible { outline: 2px solid #137b69; outline-offset: 2px; }
         [data-testid="stExpander"] { border-radius: 6px; border-color: var(--line); }
@@ -109,9 +110,9 @@ st.markdown(
             .signal-grid { grid-template-columns: minmax(0, 1fr); }
             [data-testid="stHorizontalBlock"] { flex-wrap: wrap; gap: .5rem; }
             [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] { min-width: min(100%, 140px) !important; flex: 1 1 140px !important; width: auto !important; }
-            [role="tablist"] { position: fixed; bottom: 0; left: 0; right: 0; z-index: 999; background: #fff; border-top: 1px solid var(--line); padding: .25rem .5rem calc(.25rem + env(safe-area-inset-bottom)); box-shadow: 0 -4px 18px #192b3008; }
+            .st-key-navigation [role="tablist"] { position: fixed; bottom: 0; left: 0; right: 0; z-index: 999; background: #fff; border-top: 1px solid var(--line); padding: .25rem .5rem calc(.25rem + env(safe-area-inset-bottom)); box-shadow: 0 -4px 18px #192b3008; }
             [data-baseweb="tab-highlight"], [data-baseweb="tab-border"], .react-aria-SelectionIndicator { display: none; }
-            [role="tab"] { min-height: 58px; border-radius: 6px; font-size: .75rem; flex-direction: column; gap: .15rem; }
+            .st-key-navigation [role="tab"] { min-height: 58px; border-radius: 6px; font-size: .75rem; flex-direction: column; gap: .15rem; }
             [role="tab"] p { font-size: .7rem; margin: 0; }
             [role="tab"][aria-selected="true"] { background: #e1f2ed; color: #137b69; }
             button { min-height: 44px; }
@@ -143,6 +144,10 @@ st.markdown(
     [data-testid="stExpander"] summary { min-height: 38px; padding: .35rem .65rem; }
     [data-testid="stExpander"] summary p { font-size: .8125rem; font-weight: 500; }
     [data-testid="stDataFrame"] { border-radius: 4px; }
+    .stApp button:focus-visible, .stApp summary:focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; }
+    @media (prefers-reduced-motion: reduce) {
+        .stApp *, .stApp *::before, .stApp *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+    }
     .st-key-navigation > [role="tablist"], .st-key-navigation [role="tablist"] { gap: .25rem; }
     [role="tab"] { min-height: 40px; border-radius: 4px; }
     [role="tab"] p { font-size: .8125rem; }
@@ -346,19 +351,20 @@ with api_tab:
     from maxtrade.azure_ai import render_azure_settings
     from maxtrade.notifications import render_telegram_settings
 
-    render_azure_settings()
-    render_telegram_settings()
     render_paper_account()
-    st.markdown("#### CoinDCX configuration")
-    try:
-        local_secrets = st.secrets.to_dict()
-    except (FileNotFoundError, st.errors.StreamlitSecretNotFoundError):
-        local_secrets = {}
-    st.info(credential_status(secrets=local_secrets))
-    st.caption("Configuration only. Credentials are not sent to CoinDCX; authentication and order execution are disabled.")
-    st.markdown("Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` and edit the copy locally. Alternatively set `COINDCX_API_KEY` and `COINDCX_API_SECRET` in the server environment. Restart the app afterward.")
-    st.warning("Never paste keys into chat or commit the secrets file. Use the minimum exchange permissions available; do not grant withdrawal permissions. Do not add exchange keys to a public deployment until authentication and access controls are in place.")
-    st.caption("This is a responsive web dashboard, not a native mobile app. Hosted links can be opened on a phone. Local scan history on cloud hosting may be lost when the app restarts or is redeployed, and is shared across app users.")
+    st.markdown("#### Connections")
+    with st.expander("AI research", icon=":material/psychology:"):
+        render_azure_settings()
+    with st.expander("Telegram alerts", icon=":material/notifications:"):
+        render_telegram_settings()
+    with st.expander("Exchange configuration", icon=":material/settings_ethernet:"):
+        try:
+            local_secrets = st.secrets.to_dict()
+        except (FileNotFoundError, st.errors.StreamlitSecretNotFoundError):
+            local_secrets = {}
+        st.info(credential_status(secrets=local_secrets))
+        st.caption("Configuration only. Credentials are not sent to CoinDCX; authentication and order execution are disabled.")
+        st.warning("Never share or commit API keys. Withdrawal permissions must remain disabled.")
     if st.button("Sign out", icon=":material/logout:", key="desktop_logout"):
         clear_session()
         st.rerun()
