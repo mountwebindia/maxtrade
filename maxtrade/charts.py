@@ -63,7 +63,7 @@ def candle_figure(candles: list[dict[str, Any]], analyses: list[TradeSignal],
     confirmed_dates = dates[:len(confirmed)]
     closes = confirmed["close"].astype(float)
     panels = [name for name in ("Volume", "RSI 14", "MACD") if name in indicators]
-    heights = [1 - .17 * len(panels)] + [.17] * len(panels)
+    heights = [1 - .12 * len(panels)] + [.12] * len(panels)
     figure = make_subplots(rows=1 + len(panels), cols=1, shared_xaxes=True,
                            row_heights=heights, vertical_spacing=.025)
     if chart_type == "Candles":
@@ -169,11 +169,11 @@ def candle_figure(candles: list[dict[str, Any]], analyses: list[TradeSignal],
                 figure.add_hline(y=level, line_width=1, line_dash="dot", line_color=grid, row=row, col=1)
             figure.update_yaxes(range=[0, 100], row=row, col=1)
         figure.update_yaxes(title_text=panel, row=row, col=1)
-    figure.update_layout(height=520, margin={"l": 8, "r": 16, "t": 36, "b": 90},
+    figure.update_layout(height=600, margin={"l": 8, "r": 68, "t": 36, "b": 42},
                          paper_bgcolor=background, plot_bgcolor=background,
                          font={"family": "IBM Plex Sans, sans-serif", "color": foreground, "size": 11},
                          legend={"orientation": "h", "y": -.12, "yanchor": "top", "x": 0,
-                             "font": {"color": foreground}}, dragmode="pan",
+                             "maxheight": .08, "font": {"color": foreground}}, dragmode="pan",
                          hovermode="x", newshape={"line": {"color": "#e5ac46", "width": 2}},
                          modebar={"bgcolor": background, "color": foreground, "activecolor": "#4c91ff"})
     figure.update_xaxes(showgrid=True, gridcolor=grid, rangeslider_visible=False,
@@ -193,4 +193,22 @@ def candle_figure(candles: list[dict[str, Any]], analyses: list[TradeSignal],
     radius = max((upper - lower) / 2, abs(center) * .001, .000001) * 1.08 / price_zoom
     figure.update_yaxes(range=[center - radius, center + radius], autorange=False,
                         uirevision=f'price-{price_zoom}', row=1, col=1)
+    domain_bottom, domain_top = figure.layout.yaxis.domain
+    occupied = []
+    for value, label, color, dash in sorted(levels, key=lambda level: level[0]):
+        coordinate = log10(value) if logarithmic else value
+        fraction = (coordinate - center + radius) / (2 * radius)
+        if not 0 <= fraction <= 1:
+            continue
+        label_y = domain_bottom + fraction * (domain_top - domain_bottom)
+        if occupied:
+            label_y = max(label_y, occupied[-1] + .045)
+        label_y = min(label_y, domain_top)
+        occupied.append(label_y)
+        precision = 2 if value >= 1 else 8
+        figure.add_annotation(x=1, xref='paper', xanchor='right', y=coordinate, yref='y',
+                      yshift=(label_y - domain_bottom - fraction * (domain_top - domain_bottom)) * 500,
+                              text=f'{label}  {value:,.{precision}f}', showarrow=False,
+                              bgcolor=background, bordercolor=color, borderwidth=1, borderpad=4,
+                              font={'color': color, 'size': 10}, name=label)
     return figure

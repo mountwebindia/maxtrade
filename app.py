@@ -13,7 +13,7 @@ from maxtrade.options import DeribitClient, scan_options, render_option_chain
 from maxtrade.presentation import signal_card
 from maxtrade.scanner import scan_futures, scan_spot
 from maxtrade.settings import credential_status
-from maxtrade.auth import clear_session, require_login
+from maxtrade.auth import sign_out, require_login
 
 
 st.set_page_config(page_title="MaxTrade | Signal Desk", page_icon="M", layout="wide")
@@ -104,7 +104,7 @@ st.markdown(
             [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] { display: none !important; }
         }
         @media (max-width: 640px) {
-            .st-key-desktop_logout { display: none; }
+            .st-key-desktop_logout { display: block; }
             .block-container { padding: 3.8rem .9rem 6rem; }
             .desk-title { font-size: 1.4rem; }
             .signal-grid { grid-template-columns: minmax(0, 1fr); }
@@ -170,6 +170,30 @@ st.markdown(
         [role="tab"] p { font-size: .6875rem; }
         [data-testid="stPlotlyChart"] { overflow: hidden; }
     }
+    :root { --ink: #202631; --muted: #76808f; --paper: #f7f8fa; --line: #e5e8ee; --lime: #2864ef; }
+    header[data-testid="stHeader"], [data-testid="stToolbar"], #MainMenu, footer { display: none !important; }
+    .stApp { background: #f7f8fa; }
+    .block-container { max-width: 1600px; padding-top: .75rem; }
+    .desk-header { background: #fff; margin: 0 -1.25rem; padding: .75rem 1.25rem; }
+    .brand-mark { background: #2864ef; }
+    .research-status { color: #2864ef; background: #edf3ff; }
+    .st-key-navigation [role="tablist"] { background: #fff; margin-bottom: .5rem; border-bottom: 1px solid var(--line); }
+    .st-key-navigation [role="tab"] { flex: 0 0 auto; min-width: 110px; border-radius: 0; }
+    .st-key-navigation [role="tab"][aria-selected="true"] { background: transparent; color: #2864ef; border-bottom: 2px solid #2864ef; }
+    [data-testid="stRadioOption"] { background: transparent !important; border: 1px solid var(--line); }
+    [data-testid="stRadioOption"]:has(input:checked) { background: #edf3ff !important; color: #2864ef !important; border-color: #2864ef; }
+    [data-testid="stButton"] button[kind="primary"] { background: #2864ef; border-color: #2864ef; }
+    .signal-card { border: 0; border-bottom: 1px solid var(--line); border-radius: 0; }
+    .st-key-chart_product, .st-key-chart_interval { background: #fff; }
+    [data-testid="stPlotlyChart"] { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    @media (max-width: 640px) {
+        .desk-header { margin: 0 -.65rem; padding: .65rem; }
+        .block-container { padding-top: .35rem; padding-bottom: calc(6rem + env(safe-area-inset-bottom)); }
+        .st-key-navigation [role="tablist"] { margin-bottom: 0; }
+        .st-key-chart_product { margin-top: -.25rem; }
+        .st-key-navigation [role="tab"] { flex: 1; min-width: 0; }
+        .market-ohlc { gap: 1rem; }
+    }
     </style>
     <div class="desk-header"><div class="desk-brand"><div class="brand-mark" aria-hidden="true"><span class="app-icon">candlestick_chart</span></div><div><div class="desk-title">MaxTrade</div>
     <div class="desk-subtitle">CoinDCX / Deribit</div></div></div><span class="research-status">Research only</span></div>
@@ -192,7 +216,7 @@ with st.sidebar:
                   type="primary" if st.session_state.get("navigation", "Signals") == page else "secondary",
                   width="stretch", on_click=select_page, args=(page,))
     if st.button("Sign out", icon=":material/logout:", key="auth_logout", width="stretch"):
-        clear_session()
+        sign_out()
         st.rerun()
 
 signals_tab, chart_tab, history_tab, api_tab = st.tabs(["Signals", "Chart", "History", "Settings"], key="navigation", on_change="rerun")
@@ -215,14 +239,17 @@ with signals_tab:
 
 def show_signals(rows: list[dict], key: str) -> None:
     tools = st.columns([1, 1])
-    view = tools[0].radio("Display", ["Cards", "Table"], horizontal=True, key=f"{key}_view", label_visibility="collapsed", width="stretch")
+    view = tools[0].radio("Display", ["List", "Cards", "Table"], horizontal=True, key=f"{key}_view", label_visibility="collapsed", width="stretch")
     selected_filter = tools[1].selectbox("Signal filter", ["All signals", "Candidates", "No trade", "Data errors"], key=f"{key}_filter", label_visibility="collapsed")
     actions = {"Candidates": {"LONG", "SHORT", "WATCH CALL", "WATCH PUT"}, "No trade": {"NO TRADE"}, "Data errors": {"DATA ERROR"}}
     visible = rows if selected_filter == "All signals" else [row for row in rows if row.get("Signal") in actions[selected_filter]]
     if not visible:
         st.info("No matching signals in this snapshot.")
         return
-    if view == "Cards":
+    if view == 'List':
+        from maxtrade.presentation import render_market_list
+        render_market_list(visible, key)
+    elif view == "Cards":
         st.markdown('<div class="signal-grid">' + ''.join(signal_card(row) for row in visible) + '</div>', unsafe_allow_html=True)
     else:
         st.dataframe(pd.DataFrame(visible), hide_index=True, width="stretch")
@@ -307,7 +334,7 @@ with chart_tab:
     if chart_tab.open:
         render_chart_page()
 
-with history_tab:
+def render_analysis_records() -> None:
     st.caption("Local analysis records · Latest 50 scans shown.")
     try:
         history = ScanHistory()
@@ -320,6 +347,8 @@ with history_tab:
             snapshot = history.load(selected)
             if snapshot is not None:
                 archived = pd.DataFrame(snapshot["results"])
+                st.session_state['records_product'] = snapshot['product']
+                st.session_state['records_interval'] = snapshot['interval']
                 show_signals(snapshot["results"], "history")
                 st.download_button(
                     "Download saved snapshot CSV",
@@ -346,6 +375,15 @@ with history_tab:
     except (OSError, sqlite3.Error, ValueError) as error:
         st.warning(f"History is unavailable: {error}")
 
+with history_tab:
+    history_view = st.radio('History view', ['PAPER Positions', 'Records'], horizontal=True,
+                           key='history_view', label_visibility='collapsed', width='stretch')
+    if history_view == 'PAPER Positions':
+        from maxtrade.research import render_paper_positions
+        render_paper_positions()
+    else:
+        render_analysis_records()
+
 with api_tab:
     from maxtrade.research import render_paper_account
     from maxtrade.azure_ai import render_azure_settings
@@ -366,7 +404,7 @@ with api_tab:
         st.caption("Configuration only. Credentials are not sent to CoinDCX; authentication and order execution are disabled.")
         st.warning("Never share or commit API keys. Withdrawal permissions must remain disabled.")
     if st.button("Sign out", icon=":material/logout:", key="desktop_logout"):
-        clear_session()
+        sign_out()
         st.rerun()
 
 st.caption("Research only · No orders · Public market scans")

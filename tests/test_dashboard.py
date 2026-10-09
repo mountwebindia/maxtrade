@@ -9,6 +9,44 @@ from maxtrade.settings import azure_openai_config, credential_status
 
 
 class DashboardTests(unittest.TestCase):
+    def test_market_list_search_and_session_stars(self):
+        def render():
+            from maxtrade.presentation import render_market_list
+            render_market_list([{'Market': 'BTCUSDT', 'Price': 100, 'Signal': 'LONG'},
+                                {'Market': 'ETHUSDT', 'Price': 50, 'Signal': 'NO TRADE'}], 'watch')
+        app = AppTest.from_function(render).run()
+        self.assertFalse(app.exception)
+        app.button(key='watch_favorite_BTCUSDT').click().run()
+        self.assertEqual(app.session_state['market_favorites'], ['BTCUSDT'])
+        app.toggle(key='watch_starred').set_value(True).run()
+        self.assertEqual([item.label for item in app.expander], ['BTCUSDT details'])
+        app.text_input(key='watch_search').set_value('eth').run()
+        self.assertEqual(len(app.expander), 0)
+        app.toggle(key='watch_starred').set_value(False).run()
+        self.assertEqual([item.label for item in app.expander], ['ETHUSDT details'])
+        self.assertFalse(app.exception)
+
+    def test_paper_position_views_are_read_only_and_filter_states(self):
+        def render():
+            from unittest.mock import patch
+            from maxtrade.research import render_paper_positions
+            rows = [dict(id=index, symbol='B-BTC_USDT', state=state, entry=100, stop=95, target=110,
+                         quantity=1, pnl=-5, exit=95) for index, state in enumerate(['OPEN', 'PENDING', 'CLOSED', 'CANCELLED'])]
+            with patch('maxtrade.paper.PaperLedger') as ledger:
+                ledger.return_value.positions.return_value = rows
+                render_paper_positions()
+                self_mutations = [call for call in ledger.return_value.method_calls if call[0] != 'positions']
+                assert not self_mutations
+        app = AppTest.from_function(render).run()
+        self.assertEqual(len(app.expander), 2)
+        self.assertTrue(any('not a filled position' in item.value for item in app.caption))
+        app.radio(key='positions_status').set_value('Closed').run()
+        self.assertEqual(len(app.expander), 1)
+        self.assertEqual(app.metric[-1].value, '-5.00')
+        app.radio(key='positions_status').set_value('Cancelled').run()
+        self.assertIn('CANCELLED', app.expander[0].label)
+        self.assertFalse(app.exception)
+
     def test_settings_prioritize_paper_account_and_group_connections(self):
         import streamlit as st
 
@@ -39,7 +77,7 @@ class DashboardTests(unittest.TestCase):
 
         app = AppTest.from_function(render).run()
         self.assertFalse(app.exception)
-        self.assertTrue(any(item.label == 'Indicators & display' for item in app.expander))
+        self.assertEqual(len(app.get('popover')), 2)
         self.assertEqual(app.selectbox(key='chart_theme').value, 'Light')
         app.selectbox(key='chart_theme').select('Dark').run()
         self.assertFalse(app.exception)
@@ -236,6 +274,7 @@ class DashboardTests(unittest.TestCase):
             self.assertFalse(app.exception)
             self.assertTrue(scanner.call_args.kwargs["gold_only"])
             self.assertTrue(any("not gold options" in caption.value for caption in app.caption))
+            app.radio(key='history_view').set_value('Records').run()
             self.assertTrue(any(button.key == "accuracy_update" for button in app.button))
 
     def test_daily_accuracy_filters_prediction_details_by_date(self):
@@ -311,7 +350,7 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(len(snapshot["display_candles"]), 81)
             self.assertEqual(len(snapshot["candles"]), 80)
             self.assertEqual(len(snapshot["analyses"]), 31)
-            self.assertTrue(any(item.value == "Closed-candle details" for item in app.subheader))
+            self.assertTrue(any(item.label == "Closed-candle details" for item in app.expander))
             self.assertTrue(any(item.value == "Trade decision" for item in app.subheader))
             self.assertTrue(any("Technical: WAIT / NO TRADE" in item.value for item in app.warning))
             self.assertTrue(any("No matching full research assessment" in item.value for item in app.markdown))
@@ -327,12 +366,12 @@ class DashboardTests(unittest.TestCase):
             app.selectbox(key="chart_style").select("Line").run()
             app.multiselect(key="chart_indicators").set_value([]).run()
             self.assertFalse(app.exception)
-            self.assertTrue(any("Forming candle" in item.value for item in app.caption))
+            self.assertTrue(any("Forming candle" in item.proto.body for item in app.get("html")))
             calls = client.return_value.spot_candles.call_count
             next(widget for widget in app.toggle if widget.key == "chart_live").set_value(False).run()
             app.run()
             self.assertEqual(client.return_value.spot_candles.call_count, calls)
-            self.assertTrue(any("Paused snapshot" in item.value for item in app.caption))
+            self.assertTrue(any("Paused" in item.proto.body for item in app.get("html")))
             next(button for button in app.button if button.key == "chart_refresh").click().run()
             self.assertEqual(client.return_value.spot_candles.call_count, calls + 1)
             AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=20).run()
@@ -457,10 +496,10 @@ class DashboardTests(unittest.TestCase):
             app.button[0].click().run()
             self.assertFalse(app.exception)
             self.assertEqual(scanner.call_args.args[1:4], ("BTC", "1h", 10))
-            self.assertTrue(any("WATCH CALL" in item.value for item in app.markdown))
+            self.assertTrue(any("WATCH CALL" in item.value for item in app.caption))
             next(widget for widget in app.selectbox if widget.label == "Underlying").select("ETH").run()
             self.assertTrue(any("Settings changed" in item.value for item in app.info))
-            self.assertFalse(any("WATCH CALL" in item.value for item in app.markdown))
+            self.assertFalse(any("WATCH CALL" in item.value for item in app.caption))
 
     def test_signal_filters_preserve_snapshot_and_csv_access(self):
         rows = [{"Market": "BTCUSDT", "Signal": "LONG", "Reason": "Trend aligned"},
@@ -470,6 +509,7 @@ class DashboardTests(unittest.TestCase):
             history.return_value.worker_status.return_value = None
             app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=20).run()
             app.button[0].click().run()
+            app.radio(key='live_view').set_value('Cards').run()
             next(widget for widget in app.selectbox if widget.label == "Signal filter").select("Candidates").run()
             cards = next(item.value for item in app.markdown if 'class="signal-grid"' in item.value)
             self.assertIn("BTCUSDT", cards)

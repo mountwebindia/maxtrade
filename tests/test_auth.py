@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
 
-from maxtrade.auth import login_config, verify_login
+from maxtrade.auth import login_config, verify_login, login_token, restore_login
 
 
 class AuthTests(unittest.TestCase):
@@ -27,6 +27,16 @@ class AuthTests(unittest.TestCase):
         self.assertFalse(verify_login("wrong-user", self.password, self.config))
         self.assertFalse(verify_login("test-user", "wrong-password", self.config))
 
+    def test_remembered_login_rejects_expiry_tampering_and_changed_credentials(self):
+        with patch('maxtrade.auth.time.time', return_value=1000):
+            token = login_token(self.config, 2000)
+            self.assertEqual(restore_login(token, self.config)['expires_at'], 2000)
+            self.assertIsNone(restore_login(token + 'tampered', self.config))
+            self.assertIsNone(restore_login(token, ('another-user', self.config[1])))
+            self.assertIsNone(restore_login(token, (self.config[0], 'changed-hash')))
+        with patch('maxtrade.auth.time.time', return_value=2001):
+            self.assertIsNone(restore_login(token, self.config))
+
     def test_gate_login_logout_and_expiry(self):
         with patch("maxtrade.auth.login_config", return_value=self.config), \
                 patch("maxtrade.auth.time.time", return_value=1000), \
@@ -43,6 +53,7 @@ class AuthTests(unittest.TestCase):
             self.assertEqual(len(app.tabs), 0)
             app.text_input(key="login_username").set_value("test-user")
             app.text_input(key="login_password").set_value(self.password)
+            app.checkbox(key='login_remember').uncheck()
             app.button[0].click().run()
             self.assertFalse(app.exception)
             self.assertEqual(len(app.tabs), 4)
@@ -55,7 +66,8 @@ class AuthTests(unittest.TestCase):
             self.assertNotIn("research_report", app.session_state)
             app.text_input(key="login_username").set_value("test-user")
             app.text_input(key="login_password").set_value(self.password)
+            app.checkbox(key='login_remember').uncheck()
             app.button[0].click().run()
-            with patch("maxtrade.auth.time.time", return_value=4601):
+            with patch("maxtrade.auth.time.time", return_value=29801):
                 app.run()
             self.assertEqual(len(app.tabs), 0)

@@ -346,6 +346,52 @@ def render_worker_diagnostics(status: dict | None, reports: list[dict], now: dat
                 st.text(f'Concern: {concern}')
 
 
+def render_paper_positions() -> None:
+    import sqlite3
+    import pandas as pd
+    import streamlit as st
+    from maxtrade.paper import PaperLedger
+    from maxtrade.presentation import display_number
+
+    st.markdown('#### PAPER Positions')
+    st.html('''<style>
+        [class*="st-key-position_levels_"] [data-testid="stHorizontalBlock"] {flex-wrap:nowrap !important;gap:.5rem;}
+        [class*="st-key-position_levels_"] [data-testid="stColumn"] {min-width:0 !important;flex:1 1 0 !important;}
+        [class*="st-key-position_levels_"] [data-testid="stMetricValue"] {font-size:16px;}
+        [class*="st-key-position_levels_"] p {font-size:12px;}
+        </style>''')
+    st.caption('Simulated USDT spot trades. Realized P&L includes modeled costs; no live orders or unrealized valuation.')
+    if st.button('', icon=':material/refresh:', help='Refresh saved positions', key='positions_refresh'):
+        st.rerun()
+    try:
+        positions = PaperLedger().positions()
+        view = st.radio('Position status', ['Active', 'Closed', 'Cancelled'], horizontal=True,
+                        key='positions_status', label_visibility='collapsed', width='stretch')
+        states = {'Active': {'OPEN', 'PENDING'}, 'Closed': {'CLOSED'}, 'Cancelled': {'CANCELLED'}}
+        selected = [row for row in positions if row['state'] in states[view]]
+        if not selected:
+            st.info(f'No {view.lower()} paper positions.')
+        for row in selected:
+            with st.expander(f"#{row['id']} · {row['symbol']} · {row['state']}", expanded=view == 'Active'):
+                with st.container(key=f"position_levels_{row['id']}"):
+                    levels = st.columns(3)
+                for column, label, field in zip(levels, ['Entry', 'Stop loss', 'Take profit'], ['entry', 'stop', 'target']):
+                    column.metric(label, display_number(row.get(field), 2))
+                st.caption(f"Quantity {display_number(row.get('quantity'))} · Submitted {row.get('submitted_at') or 'N/A'}")
+                if row['state'] == 'PENDING':
+                    st.caption('Pending simulation; not a filled position.')
+                if row['state'] == 'CLOSED':
+                    st.metric('Realized net P&L (USDT)', display_number(row.get('pnl'), 2))
+                    st.caption(f"Exit {display_number(row.get('exit'), 2)} · Closed {row.get('closed_at') or 'N/A'}")
+                st.caption(str(row.get('reason') or ''))
+        if positions:
+            st.download_button('All PAPER records CSV', pd.DataFrame(positions).to_csv(index=False),
+                               file_name='paper-positions.csv', mime='text/csv', icon=':material/download:',
+                               key='positions_csv')
+    except (OSError, sqlite3.Error, ValueError) as error:
+        st.warning(f'Paper positions unavailable: {error}')
+
+
 def render_paper_account() -> None:
     import sqlite3
     import streamlit as st

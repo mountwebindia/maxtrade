@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from html import escape
 import json
 from urllib.parse import urlencode
 import sqlite3
@@ -74,23 +75,38 @@ def render_chart_controls(workspace: bool = False) -> tuple[str, str, str, bool]
         .st-key-chart_interval [data-testid="stRadioOption"] p, .st-key-chart_product [data-testid="stRadioOption"] p {white-space: nowrap;}
         .st-key-chart_refresh button {min-height: 40px;}
         </style>''', unsafe_allow_html=True)
-    header = st.columns([3, 2])
-    product = header[0].radio("Chart market type", ["Spot", "Futures", "Options"], horizontal=True,
+    st.markdown('''<style>
+        .st-key-chart_interval [role="radiogroup"] {flex-wrap:nowrap !important;overflow-x:auto;gap:.15rem;}
+        .st-key-chart_interval [data-testid="stRadioOption"], .st-key-chart_product [data-testid="stRadioOption"] {min-height:36px !important;padding:.15rem .45rem !important;border:0;}
+        .st-key-chart_interval [data-testid="stRadioOption"] p, .st-key-chart_product [data-testid="stRadioOption"] p {margin:0;font-size:.75rem;}
+        .st-key-chart_toolbar [data-testid="stHorizontalBlock"] {flex-wrap:nowrap !important;}
+        .st-key-chart_toolbar [data-testid="stColumn"] {min-width:0 !important;}
+        .st-key-chart_toolbar [data-testid="stColumn"]:first-child {flex:8 1 0 !important;}
+        .st-key-chart_toolbar [data-testid="stColumn"]:not(:first-child) {flex:1 1 0 !important;}
+        </style>''', unsafe_allow_html=True)
+    product = st.radio("Chart market type", ["Spot", "Futures", "Options"], horizontal=True,
                        label_visibility="collapsed", key="chart_product", width="stretch")
-    live = header[1].toggle("Live updates · 10s", value=True, key="chart_live")
+    with st.container(key='chart_market_header'):
+        header = st.columns([7, 1, 3])
+    st.markdown('''<style>
+        .st-key-chart_market_header [data-testid="stHorizontalBlock"] {flex-wrap:nowrap !important;align-items:center;gap:.4rem;}
+        .st-key-chart_market_header [data-testid="stColumn"] {min-width:0 !important;}
+        .st-key-chart_market_header [data-testid="stColumn"]:nth-child(1) {flex:7 1 0 !important;}
+        .st-key-chart_market_header [data-testid="stColumn"]:nth-child(2) {flex:0 0 44px !important;}
+        .st-key-chart_market_header [data-testid="stColumn"]:nth-child(3) {flex:0 0 90px !important;}
+        .st-key-chart_product [role="radiogroup"] {border-bottom:1px solid #e5e8ee;}
+        .st-key-chart_product [data-testid="stRadioOption"] {border-radius:0 !important;}
+        .st-key-chart_product [data-testid="stRadioOption"]:has(input:checked) {border-bottom:2px solid #2864ef !important;}
+        </style>''', unsafe_allow_html=True)
+    live = header[2].toggle("Live · 10s", value=True, key="chart_live")
     intervals = ['1m', '5m', '15m', '30m', '1h', '4h', '1d', 'Custom']
-    interval = st.radio("Chart timeframe", intervals, index=4, horizontal=True,
-                        key="chart_interval", width="stretch")
-    if interval == 'Custom':
-        minutes = st.selectbox('Custom interval (minutes)', [2, 3, 45, 120, 180], key='chart_custom_minutes')
-        interval = f'{minutes}m'
-    controls = st.columns([3, 1])
+    controls = header[:2]
     if product == "Options":
-        market = controls[0].selectbox("Chart underlying", ["BTC", "ETH"], key="chart_underlying")
+        market = controls[0].selectbox("Chart underlying", ["BTC", "ETH"], key="chart_underlying", label_visibility='collapsed')
         pair = market
         st.caption(f"Deribit · {market}-PERPETUAL · USD underlying, not option premium")
     else:
-        if controls[1].button("Browse markets", icon=":material/search:", key="chart_browse"):
+        if controls[1].button("", icon=":material/search:", help='Browse markets', key="chart_browse"):
             client = CoinDCXClient()
             try:
                 with st.spinner("Loading active markets…"):
@@ -113,11 +129,18 @@ def render_chart_controls(workspace: bool = False) -> tuple[str, str, str, bool]
         names = sorted(catalog)
         preferred = "BTCUSDT" if product == "Spot" else "B-BTC_USDT"
         market = controls[0].selectbox("Chart market", names, index=names.index(preferred) if preferred in names else 0,
-                          key=f"chart_market_{product}")
+                          key=f"chart_market_{product}", label_visibility='collapsed')
         pair = catalog[market]
-        st.caption(f"CoinDCX · {product.lower()} · {market}")
-    display_controls, layout_controls = st.columns(2)
-    with display_controls.expander('Indicators & display', icon=':material/tune:'):
+    if 'chart_interval' not in st.session_state:
+        st.session_state['chart_interval'] = '1h'
+    with st.container(key='chart_toolbar'):
+        timeframe_controls, display_controls, layout_controls = st.columns([8, 1, 1])
+    interval = timeframe_controls.radio("Chart timeframe", intervals, horizontal=True,
+                                       label_visibility='collapsed', key="chart_interval", width="stretch")
+    if interval == 'Custom':
+        minutes = st.selectbox('Custom interval (minutes)', [2, 3, 45, 120, 180], key='chart_custom_minutes')
+        interval = f'{minutes}m'
+    with display_controls.popover('', icon=':material/tune:', help='Indicators & display', width='stretch'):
         toolbar = st.columns(3)
         toolbar[0].selectbox("Chart style", ["Candles", "Line", "Area"], key="chart_style")
         toolbar[1].selectbox("Chart theme", ["Light", "Dark"], key="chart_theme")
@@ -139,7 +162,7 @@ def render_chart_controls(workspace: bool = False) -> tuple[str, str, str, bool]
     if workspace:
         st.query_params.update({'product': product, 'pair': pair, 'interval': interval,
                                 'layout': json.dumps(preferences)})
-    with layout_controls.expander('Chart layout', expanded=False, icon=':material/save:'):
+    with layout_controls.popover('', icon=':material/save:', help='Chart layout', width='stretch'):
         tools = st.columns(2)
         tools[0].link_button('Open chart in new tab', url, icon=':material/open_in_new:', width='stretch')
         if st.button('Save layout to URL', icon=':material/bookmark:', key='chart_bookmark'):
@@ -250,7 +273,25 @@ def render_trade_status(product: str, pair: str, latest, stale: bool) -> None:
 def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, workspace: bool = False) -> None:
     require_chart_login()
     selection = (product, interval, pair)
-    refresh = st.button("Refresh chart", icon=":material/refresh:", key="chart_refresh")
+    if st.session_state.get('chart_zoom_selection') != selection:
+        st.session_state['chart_zoom_selection'] = selection
+        st.session_state['chart_price_zoom'] = 1.0
+    st.markdown('<style>.st-key-chart_price_controls [data-testid="stHorizontalBlock"] {flex-wrap:nowrap !important;}'
+                '.st-key-chart_price_controls [data-testid="stColumn"] {min-width:0 !important;flex:1 1 0 !important;}'
+                '</style>', unsafe_allow_html=True)
+    with st.container(width=100, key='chart_price_controls'):
+        scale_control, refresh_control = st.columns(2)
+    refresh = refresh_control.button('', icon=':material/refresh:', help='Refresh chart', key='chart_refresh', width='stretch')
+    with scale_control.popover('', icon=':material/height:', help='Price scale', width='stretch'):
+        zoom_controls = st.columns(3)
+    if zoom_controls[0].button('', icon=':material/zoom_in:', help='Zoom in vertically', key='chart_zoom_in',
+                               width='stretch', disabled=st.session_state['chart_price_zoom'] >= 8):
+        st.session_state['chart_price_zoom'] = min(8.0, st.session_state['chart_price_zoom'] * 1.25)
+    if zoom_controls[1].button('', icon=':material/zoom_out:', help='Zoom out vertically', key='chart_zoom_out',
+                               width='stretch', disabled=st.session_state['chart_price_zoom'] <= .25):
+        st.session_state['chart_price_zoom'] = max(.25, st.session_state['chart_price_zoom'] / 1.25)
+    if zoom_controls[2].button('', icon=':material/fit_screen:', help='Reset price scale', key='chart_zoom_reset', width='stretch'):
+        st.session_state['chart_price_zoom'] = 1.0
     previous = st.session_state.get("chart_snapshot")
     if refresh or live or not previous or previous["selection"] != selection:
         st.session_state.pop("chart_snapshot", None)
@@ -295,38 +336,25 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
     stale = (datetime.now(timezone.utc) - close_time).total_seconds() > INTERVAL_MS[interval] / 1000
     if stale:
         st.warning("Snapshot is outdated. Refresh before assessing a new setup.")
-    if not workspace:
-        render_trade_status(product, pair, latest, stale)
-    st.caption(f"Last closed candle {close_time.isoformat(timespec='minutes')} · fetched {snapshot['fetched']}")
     display_candles = snapshot["display_candles"]
     forming = int(display_candles[-1]["time"]) > int(candles[-1]["time"])
-    st.caption(f"{'Auto-refresh · 10s' if live else 'Paused snapshot'} · Last price {display_number(display_candles[-1]['close'], 2 if abs(display_candles[-1]['close']) >= 1 else 8)} · {'Forming candle' if forming else 'No forming candle from feed'}")
     last = display_candles[-1]
-    if workspace:
-        st.caption(' · '.join(f"{field.upper()} {display_number(last[field], 2 if abs(last[field]) >= 1 else 8)}"
-                             for field in ('open', 'high', 'low', 'close')))
-    else:
-        metrics = st.columns(4)
-        for column, field in zip(metrics, ("open", "high", "low", "close")):
-            column.metric(field.upper(), display_number(last[field], 2 if abs(last[field]) >= 1 else 8))
+    change = (float(last['close']) / float(last['open']) - 1) * 100
+    quote = display_number(last['close'], 2 if abs(last['close']) >= 1 else 8)
+    ohlc = ''.join(f'<div><span>{field.upper()}</span><strong>{display_number(last[field], 2 if abs(last[field]) >= 1 else 8)}</strong></div>'
+                   for field in ('open', 'high', 'low'))
+    st.html(f'''<style>
+        .market-strip {{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid #dce5e8;border-bottom:1px solid #dce5e8;padding:.8rem 0;flex-wrap:wrap;}}
+        .market-quote strong {{font-size:1.6rem;font-variant-numeric:tabular-nums;}}
+        .market-quote small {{display:block;color:#64767b;font-size:.7rem;}}
+        .market-ohlc {{display:flex;gap:1.5rem;flex-wrap:wrap;}}
+        .market-ohlc span {{display:block;color:#64767b;font-size:.65rem;}}
+        .market-ohlc strong {{font-size:.8rem;font-variant-numeric:tabular-nums;}}
+        </style><div class="market-strip"><div class="market-quote"><small>{escape(pair)} / {escape(interval)}</small>
+    <strong>{quote}</strong> <span style="color:{'#00896b' if change >= 0 else '#db4056'}">{change:+.2f}%</span>
+    <small>{'Live · 10s' if live else 'Paused'} · {'Forming candle' if forming else 'Closed candle'} · Candle change</small></div>
+    <div class="market-ohlc">{ohlc}</div></div>''')
     style = st.session_state.get("chart_style", "Candles")
-    if st.session_state.get('chart_zoom_selection') != selection:
-        st.session_state['chart_zoom_selection'] = selection
-        st.session_state['chart_price_zoom'] = 1.0
-    st.markdown('<style>.st-key-chart_price_controls [data-testid="stHorizontalBlock"] {flex-wrap:nowrap !important;}'
-                '.st-key-chart_price_controls [data-testid="stColumn"] {min-width:0 !important;flex:1 1 0 !important;}'
-                '</style>', unsafe_allow_html=True)
-    with st.container(width=200, key='chart_price_controls'):
-        zoom_controls = st.columns(3)
-    if zoom_controls[0].button('', icon=':material/zoom_in:', help='Zoom in vertically', key='chart_zoom_in',
-                               width='stretch', disabled=st.session_state['chart_price_zoom'] >= 8):
-        st.session_state['chart_price_zoom'] = min(8.0, st.session_state['chart_price_zoom'] * 1.25)
-    if zoom_controls[1].button('', icon=':material/zoom_out:', help='Zoom out vertically', key='chart_zoom_out',
-                               width='stretch', disabled=st.session_state['chart_price_zoom'] <= .25):
-        st.session_state['chart_price_zoom'] = max(.25, st.session_state['chart_price_zoom'] / 1.25)
-    if zoom_controls[2].button('', icon=':material/fit_screen:', help='Reset price scale', key='chart_zoom_reset',
-                               width='stretch'):
-        st.session_state['chart_price_zoom'] = 1.0
     theme = st.session_state.get("chart_theme", "Dark")
     indicators = tuple(st.session_state.get("chart_indicators", ["EMA 20", "EMA 50", "Volume", "RSI 14"]))
     logarithmic = st.session_state.get("chart_log", False)
@@ -369,18 +397,22 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
                     width="stretch", config={"displaylogo": False, "scrollZoom": True,
                                               "displayModeBar": True,
                                               "modeBarButtonsToAdd": ["drawline", "drawrect", "drawopenpath", "eraseshape"],
-                                              "modeBarButtonsToRemove": ["select2d", "lasso2d"],
+                                              "modeBarButtonsToRemove": ["select2d", "lasso2d", "zoom2d", "zoomIn2d", "zoomOut2d", "autoScale2d"],
                                               "toImageButtonOptions": {"filename": "maxtrade_chart", "scale": 2}},
                     key="candle_chart")
-    st.download_button('Save interactive chart', figure.to_html(include_plotlyjs=True, full_html=True),
+    with st.popover('', icon=':material/download:', help='Chart exports'):
+        st.download_button('Save interactive chart', figure.to_html(include_plotlyjs=True, full_html=True),
                        file_name='maxtrade-chart.html', mime='text/html', icon=':material/download:',
                        key='chart_html')
-    if workspace:
         export = pd.DataFrame(display_candles)
         export['time'] = pd.to_datetime(export['time'], unit='ms', utc=True)
         st.download_button('Candle CSV', export.to_csv(index=False), file_name='maxtrade_candles.csv',
                            mime='text/csv', icon=':material/download:', key='chart_csv')
+    if workspace:
         return
+    with st.expander('Trade decision & PAPER risk', icon=':material/shield:'):
+        render_trade_status(product, pair, latest, stale)
+        st.caption(f"Last closed candle {close_time.isoformat(timespec='minutes')} · fetched {snapshot['fetched']}")
     st.caption('Arrows: completed-candle technical setups, not executed trades. Spot SELL is bearish research, not a short order. Diamonds/crosses: saved paper entry/exit on this database only.')
     with st.expander('Past signal records', expanded=False):
         st.caption('Recomputed from loaded completed candles only; not a contemporaneously saved recommendation. First warm-up setup is excluded. Options labels describe underlying bias, not option premium.')
@@ -391,20 +423,16 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
                                mime='text/csv', icon=':material/download:', key='chart_signal_csv')
         else:
             st.info('No new BUY/SELL setup transitions in the loaded completed candles.')
-    st.subheader("Closed-candle details")
-    st.write(f"Technical direction: {latest.action}")
-    st.write(latest.reason)
-    st.dataframe([{"Close": candles[-1]["close"], "EMA 20": latest.ema_fast,
+    with st.expander('Closed-candle details', icon=':material/analytics:'):
+        st.write(f"Technical direction: {latest.action}")
+        st.write(latest.reason)
+        st.dataframe([{"Close": candles[-1]["close"], "EMA 20": latest.ema_fast,
                    "EMA 50": latest.ema_slow, "RSI 14": latest.rsi,
                    "Research entry": latest.entry, "Research stop": latest.stop,
                    "Research target": latest.target}], hide_index=True, width="stretch")
     st.caption(f"{interval} completed candle · {close_time.isoformat(timespec='minutes')} · "
                f"{'USD underlying, not option premium' if product == 'Options' else 'Market quote currency'} · "
                "Technical research only, not paper approval or an exchange order.")
-    export = pd.DataFrame(display_candles)
-    export["time"] = pd.to_datetime(export["time"], unit="ms", utc=True)
-    st.download_button("Candle CSV", export.to_csv(index=False), file_name="maxtrade_candles.csv",
-                        mime="text/csv", icon=":material/download:", key="chart_csv")
     if product == "Options" and interval in ('1h', '4h'):
         render_option_chain(pair, 'chart')
         st.subheader("Contract watchlist")

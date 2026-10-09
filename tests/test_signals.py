@@ -79,6 +79,11 @@ class SignalTests(unittest.TestCase):
                 names = [shape.name for shape in base.layout.shapes if shape.showlegend]
                 self.assertIn('PAPER #7 Take profit 120.00', names)
                 self.assertIn('PAPER #7 Stop loss 95.00', names)
+                labels = {annotation.name: annotation for annotation in base.layout.annotations}
+                self.assertIn('PAPER #7 Take profit', labels)
+                self.assertIn('PAPER #7 Stop loss', labels)
+                self.assertEqual(labels['PAPER #7 Stop loss'].yref, 'y')
+                self.assertAlmostEqual(labels['PAPER #7 Stop loss'].y, 1.9777236052888477 if logarithmic else 95)
                 self.assertFalse(any('#8' in name or '#9' in name for name in names))
                 self.assertEqual(base.layout.xaxis.range, zoom.layout.xaxis.range)
                 self.assertEqual(base.layout.yaxis3.range, zoom.layout.yaxis3.range)
