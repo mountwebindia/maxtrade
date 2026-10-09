@@ -76,10 +76,14 @@ class SignalTests(unittest.TestCase):
                                      logarithmic=logarithmic)
                 zoom = candle_figure(candles, analyses, '1h', signals=[], paper_positions=positions,
                                      logarithmic=logarithmic, price_zoom=2)
-                names = [shape.name for shape in base.layout.shapes if shape.showlegend]
+                names = [shape.name for shape in base.layout.shapes if shape.name]
                 self.assertIn('PAPER #7 Take profit 120.00', names)
                 self.assertIn('PAPER #7 Stop loss 95.00', names)
                 labels = {annotation.name: annotation for annotation in base.layout.annotations}
+                self.assertEqual(len(labels), len(base.layout.annotations))
+                self.assertFalse(any(shape.showlegend for shape in base.layout.shapes))
+                self.assertEqual(labels['PAPER #7 Take profit'].xanchor, 'left')
+                self.assertEqual(labels['PAPER #7 Take profit'].text, 'PAPER #7 TP<br>120.00')
                 self.assertIn('PAPER #7 Take profit', labels)
                 self.assertIn('PAPER #7 Stop loss', labels)
                 self.assertEqual(labels['PAPER #7 Stop loss'].yref, 'y')

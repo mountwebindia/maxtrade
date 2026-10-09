@@ -110,14 +110,13 @@ def candle_figure(candles: list[dict[str, Any]], analyses: list[TradeSignal],
             label = ('CALL bias' if action == 'BUY' else 'PUT bias') if options else action
             figure.add_trace(go.Scatter(x=[record['Candle time'] for record in selected],
                                        y=[record['Marker price'] for record in selected], name=f'{label} setup',
-                                       mode='markers+text', text=[label] * len(selected),
-                                       textposition='bottom center' if action == 'BUY' else 'top center',
+                                       mode='markers',
                                        marker={'symbol': symbol, 'size': 12, 'color': color},
                                        customdata=[[str(record['Available at']), record['Reference entry'], record['Stop'],
                                                     record['Target'], record['RSI'], escape(record['Reason'])] for record in selected],
-                                       hovertemplate=label + ' technical setup<br>Available %{customdata[0]}'
-                                       '<br>Reference %{customdata[1]}<br>Stop %{customdata[2]}<br>Target %{customdata[3]}'
-                                       '<br>RSI %{customdata[4]:.1f}<br>%{customdata[5]}<extra>Not a paper fill</extra>'), row=1, col=1)
+                                       hovertemplate=label + ' setup (not a fill)<br>%{customdata[0]}'
+                                       '<br>Entry %{customdata[1]}<br>SL %{customdata[2]}<br>TP %{customdata[3]}'
+                                       '<extra></extra>'), row=1, col=1)
     for field, price_field, label in [('opened_at', 'entry', 'Paper entry'), ('closed_at', 'exit', 'Paper exit')]:
         selected = [position for position in paper_positions or [] if position.get(field) and position.get(price_field)
                     and dates[0] <= datetime.fromisoformat(position[field]) <= dates[-1] + pd.Timedelta(milliseconds=INTERVAL_MS[interval])]
@@ -156,9 +155,7 @@ def candle_figure(candles: list[dict[str, Any]], analyses: list[TradeSignal],
     for value, label, color, dash in levels:
         precision = 2 if value >= 1 else 8
         figure.add_hline(y=value, line_color=color, line_dash=dash, line_width=1,
-                         name=f'{label} {value:,.{precision}f}', showlegend=True,
-                         annotation_text=f'{label} {value:,.{precision}f}' if 'Research' in label else '',
-                         annotation_position='top left', annotation_font_size=10, row=1, col=1)
+                         name=f'{label} {value:,.{precision}f}', showlegend=False, row=1, col=1)
     for row, panel in enumerate(panels, start=2):
         if panel == "Volume":
             figure.add_trace(go.Bar(x=dates, y=[bar.get("volume", 0) for bar in candles], name="Volume",
@@ -180,12 +177,12 @@ def candle_figure(candles: list[dict[str, Any]], analyses: list[TradeSignal],
                 figure.add_hline(y=level, line_width=1, line_dash="dot", line_color=grid, row=row, col=1)
             figure.update_yaxes(range=[0, 100], row=row, col=1)
         figure.update_yaxes(title_text=panel, row=row, col=1)
-    figure.update_layout(height=600, margin={"l": 8, "r": 68, "t": 36, "b": 42},
+    figure.update_layout(height=600, margin={"l": 8, "r": 118, "t": 36, "b": 42},
                          paper_bgcolor=background, plot_bgcolor=background,
                          font={"family": "IBM Plex Sans, sans-serif", "color": foreground, "size": 11},
                          legend={"orientation": "h", "y": -.12, "yanchor": "top", "x": 0,
                              "maxheight": .08, "font": {"color": foreground}}, dragmode="pan",
-                         hovermode="x", newshape={"line": {"color": "#e5ac46", "width": 2}},
+                         hovermode="closest", hoverlabel={"namelength": 0}, newshape={"line": {"color": "#e5ac46", "width": 2}},
                          modebar={"bgcolor": background, "color": foreground, "activecolor": "#4c91ff"})
     figure.update_xaxes(showgrid=True, gridcolor=grid, rangeslider_visible=False,
                         showspikes=True, spikemode="across", spikesnap="cursor", spikedash="dot",
@@ -214,13 +211,16 @@ def candle_figure(candles: list[dict[str, Any]], analyses: list[TradeSignal],
             continue
         label_y = domain_bottom + fraction * (domain_top - domain_bottom)
         if occupied:
-            label_y = max(label_y, occupied[-1] + .045)
+            label_y = max(label_y, occupied[-1] + .075)
         label_y = min(label_y, domain_top)
         occupied.append(label_y)
         precision = 2 if value >= 1 else 8
-        figure.add_annotation(x=1, xref='paper', xanchor='right', y=coordinate, yref='y',
+        short_label = label.replace('Take profit', 'TP').replace('Stop loss', 'SL').replace('Last price', 'Price')
+        short_label = short_label.replace('Previous setup', 'Prev').replace('CALL bias underlying Research', 'CALL ref')
+        short_label = short_label.replace('PUT bias underlying Research', 'PUT ref').replace('BUY setup Research', 'BUY ref').replace('SELL setup Research', 'SELL ref')
+        figure.add_annotation(x=1, xref='paper', xanchor='left', xshift=36, y=coordinate, yref='y',
                       yshift=(label_y - domain_bottom - fraction * (domain_top - domain_bottom)) * 500,
-                              text=f'{label}  {value:,.{precision}f}', showarrow=False,
-                              bgcolor=background, bordercolor=color, borderwidth=1, borderpad=4,
+                      text=f'{short_label}<br>{value:,.{precision}f}', hovertext=label, showarrow=False,
+                      bgcolor=background, borderpad=2,
                               font={'color': color, 'size': 10}, name=label)
     return figure

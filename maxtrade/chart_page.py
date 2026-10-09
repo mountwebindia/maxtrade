@@ -48,6 +48,58 @@ def render_touch_zoom() -> None:
             const container = plot.closest('[data-testid="stPlotlyChart"]');
             container.style.position = 'relative';
             container.appendChild(fullscreen);
+            document.getElementById('maxtrade-chart-details')?.remove();
+            const details = document.createElement('dialog');
+            details.id = 'maxtrade-chart-details';
+            details.setAttribute('aria-label', 'Chart point details');
+            const closeDetails = document.createElement('button');
+            closeDetails.type = 'button';
+            closeDetails.title = 'Close details';
+            closeDetails.setAttribute('aria-label', 'Close details');
+            closeDetails.innerHTML = '<span class="material-symbols-rounded">close</span>';
+            const heading = document.createElement('strong');
+            const fields = document.createElement('dl');
+            details.append(closeDetails, heading, fields);
+            container.appendChild(details);
+            closeDetails.onclick = () => details.close();
+            plot.on('plotly_click', event => {
+                if (!window.matchMedia('(max-width: 640px)').matches || pinching) return;
+                const point = event.points?.[0];
+                if (!point) return;
+                const trace = point.data;
+                const custom = point.customdata || trace.customdata?.[point.pointNumber];
+                let rows;
+                if (trace.name?.endsWith(' setup') && custom) {
+                    heading.textContent = trace.name + ' · not a PAPER fill';
+                    rows = [['Available at', custom[0]], ['Reference entry', custom[1]],
+                            ['SL', custom[2]], ['TP', custom[3]], ['RSI', custom[4]], ['Reason', custom[5]]];
+                } else if (trace.name === 'Paper entry' || trace.name === 'Paper exit') {
+                    heading.textContent = trace.name + ' · saved simulation';
+                    rows = [['Time', point.x], ['Price', point.y], ['Position', custom?.[0]],
+                            ['State', custom?.[1]], ['Net P&L', custom?.[2]]];
+                } else if (trace.type === 'candlestick' || trace.type === 'ohlc') {
+                    heading.textContent = 'Candle · ' + point.x;
+                    rows = ['open', 'high', 'low', 'close'].map(field => [field.toUpperCase(), trace[field]?.[point.pointNumber]]);
+                } else {
+                    heading.textContent = trace.name || 'Chart point';
+                    rows = [['Time', point.x], ['Value', point.y]];
+                }
+                fields.replaceChildren();
+                for (const [label, value] of rows) {
+                    const term = document.createElement('dt');
+                    const description = document.createElement('dd');
+                    term.textContent = label;
+                    description.textContent = value == null ? 'N/A' : typeof value === 'number'
+                        ? value.toLocaleString('en-US', {maximumFractionDigits: Math.abs(value) >= 1 ? 2 : 8})
+                        : String(value);
+                    fields.append(term, description);
+                }
+                if (!details.open) details.show();
+                closeDetails.focus({preventScroll: true});
+            });
+            details.addEventListener('keydown', event => {
+                if (event.key === 'Escape') details.close();
+            });
             const resizeChart = () => {
                 const expanded = document.fullscreenElement === container || container.classList.contains('maxtrade-expanded');
                 fullscreen.title = expanded ? 'Exit fullscreen' : 'Fullscreen chart';
@@ -119,6 +171,14 @@ def render_touch_zoom() -> None:
     })();
     })();</script><style>
     .maxtrade-fullscreen {position:absolute;right:8px;bottom:8px;z-index:10;background:#fff;color:#202631;border:1px solid #d5dfe5;width:44px;height:44px;display:grid;place-items:center;cursor:pointer;}
+    #maxtrade-chart-details {position:fixed;top:auto;bottom:calc(68px + env(safe-area-inset-bottom));left:8px;right:8px;width:auto;max-width:620px;max-height:38vh;overflow:auto;margin:0 auto;padding:12px;background:#fff;color:#202631;border:1px solid #d5dfe5;border-radius:6px;z-index:10001;box-sizing:border-box;box-shadow:0 -3px 18px #0002;}
+    #maxtrade-chart-details strong {display:block;margin-right:48px;font-size:13px;overflow-wrap:anywhere;}
+    #maxtrade-chart-details button {float:right;width:44px;height:44px;background:transparent;border:0;color:inherit;display:grid;place-items:center;cursor:pointer;}
+    #maxtrade-chart-details dl {display:grid;grid-template-columns:100px minmax(0,1fr);gap:6px;margin:12px 0 0;font-size:12px;}
+    #maxtrade-chart-details dt {color:#64767b;}
+    #maxtrade-chart-details dd {margin:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums;}
+    @media(max-width:640px){.st-key-candle_chart .hoverlayer {display:none;}}
+    [data-testid="stPlotlyChart"]:fullscreen #maxtrade-chart-details, .maxtrade-expanded #maxtrade-chart-details {bottom:8px;}
     [data-testid="stPlotlyChart"]:fullscreen, .maxtrade-expanded {background:#fff;width:100vw !important;height:100vh !important;}
     .maxtrade-expanded {position:fixed !important;inset:0;z-index:10000;}
     [data-testid="stPlotlyChart"]:fullscreen .js-plotly-plot, .maxtrade-expanded .js-plotly-plot {height:calc(100vh - 56px) !important;}
@@ -228,9 +288,9 @@ def render_chart_controls(workspace: bool = False) -> tuple[str, str, str, bool]
         .st-key-chart_market_header [data-testid="stColumn"]:nth-child(1) {flex:7 1 0 !important;}
         .st-key-chart_market_header [data-testid="stColumn"]:nth-child(2) {flex:0 0 44px !important;}
         .st-key-chart_market_header [data-testid="stColumn"]:nth-child(3) {flex:0 0 90px !important;}
-        .st-key-chart_product [role="radiogroup"] {border-bottom:1px solid #e5e8ee;}
-        .st-key-chart_product [data-testid="stRadioOption"] {border-radius:0 !important;}
-        .st-key-chart_product [data-testid="stRadioOption"]:has(input:checked) {border-bottom:2px solid #2864ef !important;}
+        .st-key-chart_product [role="radiogroup"] {border:0 !important;align-items:center;flex-wrap:nowrap !important;}
+        .st-key-chart_product [data-testid="stRadioOption"] {border:0 !important;border-radius:4px !important;min-height:40px !important;display:flex;align-items:center;}
+        .st-key-chart_product [data-testid="stRadioOption"]:has(input:checked) {border:0 !important;background:#e7efff !important;color:#235bd2;}
         </style>''', unsafe_allow_html=True)
     live = header[2].toggle("Live · 10s", value=True, key="chart_live")
     intervals = ['1m', '5m', '15m', '30m', '1h', '4h', '1d', 'Custom']
