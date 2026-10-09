@@ -11,6 +11,7 @@ import sqlite3
 import requests
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from maxtrade.charts import candle_figure, chart_analysis, signal_records
 from maxtrade.backtest import ReplaySettings, replay
@@ -24,15 +25,54 @@ from maxtrade.auth import require_chart_login
 
 def render_touch_zoom() -> None:
     library = base64.b64encode(Path(__file__).with_name('hammer.min.js').read_bytes()).decode('ascii')
-    st.html('<script>if (!window.Hammer) { const library = document.createElement("script"); '
+    components.html('<script>(() => { const window = parent.window; const document = parent.document; if (!window.Hammer) { const library = document.createElement("script"); '
             'library.textContent = atob("' + library + '"); document.head.appendChild(library); }' + '''
     (() => {
         const attach = () => {
             const plot = document.querySelector('.st-key-candle_chart .js-plotly-plot')
                 || document.querySelector('[data-testid="stPlotlyChart"] .js-plotly-plot');
-            if (!plot || !window.Hammer || plot.maxtradePinch) return;
-            const manager = new Hammer.Manager(plot, {touchAction: 'pan-y'});
-            manager.add(new Hammer.Pinch({threshold: 0}));
+            if (!plot || !plot.layout || !plot._context || !window.Hammer || plot.maxtradePinch) return;
+            const zoomWithWheel = event => {
+                if (event.pointerType === 'touch') return;
+                if (!event.ctrlKey) return;
+                plot._context.scrollZoom = true;
+                plot._context._scrollZoom.cartesian = true;
+            };
+            plot.addEventListener('wheel', zoomWithWheel, {capture: true, passive: true});
+            const fullscreen = document.createElement('button');
+            fullscreen.type = 'button';
+            fullscreen.className = 'maxtrade-fullscreen';
+            fullscreen.title = 'Fullscreen chart';
+            fullscreen.setAttribute('aria-label', 'Fullscreen chart');
+            fullscreen.innerHTML = '<span class="material-symbols-rounded">fullscreen</span>';
+            const container = plot.closest('[data-testid="stPlotlyChart"]');
+            container.style.position = 'relative';
+            container.appendChild(fullscreen);
+            const resizeChart = () => {
+                const expanded = document.fullscreenElement === container || container.classList.contains('maxtrade-expanded');
+                fullscreen.title = expanded ? 'Exit fullscreen' : 'Fullscreen chart';
+                fullscreen.setAttribute('aria-label', fullscreen.title);
+                window.dispatchEvent(new Event('resize'));
+            };
+            fullscreen.onclick = async () => {
+                try {
+                    if (document.fullscreenElement) await document.exitFullscreen();
+                    else if (container.classList.contains('maxtrade-expanded')) container.classList.remove('maxtrade-expanded');
+                    else await container.requestFullscreen();
+                } catch {
+                    container.classList.toggle('maxtrade-expanded');
+                }
+                resizeChart();
+            };
+            document.addEventListener('fullscreenchange', resizeChart);
+            document.addEventListener('keydown', event => {
+                if (event.key === 'Escape' && container.classList.contains('maxtrade-expanded')) {
+                    container.classList.remove('maxtrade-expanded');
+                    resizeChart();
+                }
+            });
+            const manager = new window.Hammer.Manager(plot, {touchAction: 'pan-y'});
+            manager.add(new window.Hammer.Pinch({threshold: 0}));
             let pinching = false;
             const routeTouch = event => {
                 if (event.touches.length > 1) pinching = true;
@@ -77,7 +117,21 @@ def render_touch_zoom() -> None:
         }
         attach();
     })();
-    </script>''', unsafe_allow_javascript=True)
+    })();</script><style>
+    .maxtrade-fullscreen {position:absolute;right:8px;bottom:8px;z-index:10;background:#fff;color:#202631;border:1px solid #d5dfe5;width:44px;height:44px;display:grid;place-items:center;cursor:pointer;}
+    [data-testid="stPlotlyChart"]:fullscreen, .maxtrade-expanded {background:#fff;width:100vw !important;height:100vh !important;}
+    .maxtrade-expanded {position:fixed !important;inset:0;z-index:10000;}
+    [data-testid="stPlotlyChart"]:fullscreen .js-plotly-plot, .maxtrade-expanded .js-plotly-plot {height:calc(100vh - 56px) !important;}
+    </style><script>
+    (() => { const document = parent.document;
+    if (!document.getElementById('maxtrade-chart-interaction-style')) {
+        const style = document.createElement('style');
+        style.id = 'maxtrade-chart-interaction-style';
+        style.textContent = globalThis.document.querySelector('style').textContent;
+        document.head.appendChild(style);
+    }
+    })();
+    </script>''', height=0)
 
 
 def chart_workspace_url(product: str, pair: str, interval: str, preferences: dict) -> str:
@@ -231,7 +285,7 @@ def render_chart_controls(workspace: bool = False) -> tuple[str, str, str, bool]
         toggles[0].toggle("Log price scale", key="chart_log")
         toggles[1].toggle('BUY / SELL setups', value=True, key='chart_signals')
         toggles[2].toggle('Saved paper fills', value=True, key='chart_paper_fills')
-        st.toggle('Wheel zoom', key='chart_wheel_zoom')
+        st.toggle('Wheel zoom', value=True, key='chart_wheel_zoom')
         st.selectbox('Time window', ['Latest candles', 'All loaded candles', 'Custom UTC range'], key='chart_window')
         if st.session_state['chart_window'] == 'Custom UTC range':
             dates = st.columns(2)
@@ -465,7 +519,7 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
     figure = candle_figure(display_candles, analyses, interval, options=product == "Options",
                            chart_type=style, indicators=indicators, theme=theme,
                            logarithmic=logarithmic, visible_bars=visible,
-                           signals=records if st.session_state.get('chart_signals', True) else None,
+                           signals=records if st.session_state.get('chart_signals', True) and not stale else None,
                            paper_positions=paper_positions,
                            price_zoom=st.session_state['chart_price_zoom'],
                            price_offset=st.session_state['chart_price_offset'])
@@ -490,7 +544,7 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
     if workspace:
         figure.update_layout(height=620)
     st.plotly_chart(figure,
-                    width="stretch", config={"displaylogo": False, "scrollZoom": st.session_state.get('chart_wheel_zoom', False),
+                    width="stretch", config={"displaylogo": False, "scrollZoom": st.session_state.get('chart_wheel_zoom', True),
                                               "displayModeBar": True,
                                               "modeBarButtonsToAdd": ["drawline", "drawrect", "drawopenpath", "eraseshape"],
                                               "modeBarButtonsToRemove": ["select2d", "lasso2d", "autoScale2d"],

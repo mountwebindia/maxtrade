@@ -104,9 +104,9 @@ class DashboardTests(unittest.TestCase):
         self.assertFalse(app.exception)
         self.assertEqual(app.selectbox(key='chart_theme').value, 'Dark')
         self.assertTrue(app.toggle(key='chart_signals').value)
-        self.assertFalse(app.toggle(key='chart_wheel_zoom').value)
-        app.toggle(key='chart_wheel_zoom').set_value(True).run()
         self.assertTrue(app.toggle(key='chart_wheel_zoom').value)
+        app.toggle(key='chart_wheel_zoom').set_value(False).run()
+        self.assertFalse(app.toggle(key='chart_wheel_zoom').value)
 
     def test_chart_only_controls_preserve_selection_and_hide_dashboard_research(self):
         def render():

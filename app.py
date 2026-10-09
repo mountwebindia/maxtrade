@@ -208,6 +208,13 @@ st.markdown(
     .brand-mark {background:linear-gradient(145deg,#4387fa,#1851c9);box-shadow:inset 0 1px 0 #ffffff80;}
     .st-key-signals_controls [data-testid="stHorizontalBlock"], [class*="_signal_tools"] [data-testid="stHorizontalBlock"] {align-items:flex-end;}
     @media(max-width:640px) {.st-key-signals_controls [data-testid="stColumn"] {flex:1 1 calc(50% - .5rem) !important;min-width:0 !important;}}
+    .st-key-navigation [role="tablist"] {position:fixed;bottom:0;left:0;right:0;z-index:999;margin:0;padding:.25rem .5rem calc(.25rem + env(safe-area-inset-bottom));border-top:1px solid var(--line);justify-content:center;}
+    .st-key-navigation [role="tab"] {flex:1;max-width:240px;min-width:0;min-height:54px;}
+    .block-container {padding-bottom:calc(6rem + env(safe-area-inset-bottom));}
+    .st-key-chart_product {position:fixed;top:0;left:58px;right:12px;width:calc(100% - 70px) !important;z-index:998;height:58px;display:flex;align-items:center;background:transparent !important;margin-top:0 !important;}
+    .block-container:has(.st-key-chart_product) {padding-top:70px;}
+    .block-container:has(.st-key-chart_product) .desk-header {position:fixed;top:0;left:0;right:0;height:58px;box-sizing:border-box;margin:0;z-index:997;}
+    .st-key-chart_product [role="radiogroup"] {gap:.25rem;}
     .st-key-chart_product, .st-key-chart_interval { background: #fff; }
     [data-testid="stPlotlyChart"] { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
     @media (max-width: 640px) {
@@ -226,8 +233,8 @@ st.markdown(
 require_login()
 
 if st.query_params.get('view') == 'chart':
-    render_chart_page(workspace=True)
-    st.stop()
+    st.session_state['navigation'] = 'Chart'
+    st.query_params.pop('view', None)
 
 def select_page(page: str) -> None:
     st.session_state["navigation"] = page

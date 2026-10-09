@@ -179,6 +179,7 @@ def render_option_chain(currency: str, key: str) -> None:
             row[f'{side} signal'] = signal.get('Signal', 'NOT SCANNED') if signal and current else 'NOT SCANNED' if current else 'UNAVAILABLE'
             row[f'{side} comment'] = (signal.get('Reason', '') if signal and current else
                                       'Run a contract scan; buy approval nahi.' if current else 'Quote stale ya unavailable; entry nahi.')
+            row[f'{side} premium levels'] = 'N/A: premium entry/TP/SL strategy not available'
         annotated.append(row)
     rows = annotated
     strikes = sorted({row['Strike USD'] for row in rows})
@@ -195,8 +196,8 @@ def render_option_chain(currency: str, key: str) -> None:
     metrics[0].metric('Strikes', len(rows))
     metrics[1].metric('CALL contracts', sum(bool(row.get('CALL contract')) for row in rows))
     metrics[2].metric('PUT contracts', sum(bool(row.get('PUT contract')) for row in rows))
-    columns = ['CALL signal', 'CALL comment', 'CALL quote status', 'CALL volume', 'CALL OI', 'CALL IV %', 'CALL bid', 'CALL mark', 'CALL ask',
-               'Strike USD', 'PUT bid', 'PUT mark', 'PUT ask', 'PUT IV %', 'PUT OI', 'PUT volume', 'PUT quote status', 'PUT signal', 'PUT comment']
+    columns = ['CALL signal', 'CALL comment', 'CALL premium levels', 'CALL quote status', 'CALL volume', 'CALL OI', 'CALL IV %', 'CALL bid', 'CALL mark', 'CALL ask',
+               'Strike USD', 'PUT bid', 'PUT mark', 'PUT ask', 'PUT IV %', 'PUT OI', 'PUT volume', 'PUT quote status', 'PUT signal', 'PUT comment', 'PUT premium levels']
     table = pd.DataFrame(rows).reindex(columns=columns).sort_values('Strike USD')
     styled = table.style.set_properties(subset=['Strike USD'], **{'font-weight': 'bold', 'background-color': '#263238', 'color': '#ffffff'})
     st.dataframe(styled, hide_index=True, width='stretch', height=480,

@@ -144,7 +144,8 @@ def candle_figure(candles: list[dict[str, Any]], analyses: list[TradeSignal],
         for value, label, color in [(latest.entry, 'Entry', '#327ba5'), (latest.target, 'Take profit', rising),
                                     (latest.stop, 'Stop loss', falling)]:
             if value is not None and isfinite(float(value)) and float(value) > 0:
-                levels.append((float(value), f'Research {label}', color, 'dot'))
+                direction = ('CALL bias underlying' if latest.action == 'LONG' else 'PUT bias underlying') if options else ('BUY setup' if latest.action == 'LONG' else 'SELL setup')
+                levels.append((float(value), f'{direction} Research {label}', color, 'dot'))
     elif signals:
         previous = signals[-1]
         for field, label, color in [('Reference entry', 'Entry', '#327ba5'), ('Target', 'Take profit', rising),
@@ -155,7 +156,9 @@ def candle_figure(candles: list[dict[str, Any]], analyses: list[TradeSignal],
     for value, label, color, dash in levels:
         precision = 2 if value >= 1 else 8
         figure.add_hline(y=value, line_color=color, line_dash=dash, line_width=1,
-                         name=f'{label} {value:,.{precision}f}', showlegend=True, row=1, col=1)
+                         name=f'{label} {value:,.{precision}f}', showlegend=True,
+                         annotation_text=f'{label} {value:,.{precision}f}' if 'Research' in label else '',
+                         annotation_position='top left', annotation_font_size=10, row=1, col=1)
     for row, panel in enumerate(panels, start=2):
         if panel == "Volume":
             figure.add_trace(go.Bar(x=dates, y=[bar.get("volume", 0) for bar in candles], name="Volume",

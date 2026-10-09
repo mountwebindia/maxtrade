@@ -132,3 +132,5 @@ class OptionsTests(unittest.TestCase):
                 app.run()
                 self.assertFalse(app.exception)
                 self.assertEqual(set(app.dataframe[0].value['CALL signal']), {expected})
+                self.assertEqual(set(app.dataframe[0].value['CALL premium levels']),
+                                 {'N/A: premium entry/TP/SL strategy not available'})
