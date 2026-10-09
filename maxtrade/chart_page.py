@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timezone
 from html import escape
 import json
+from pathlib import Path
 from urllib.parse import urlencode
 import sqlite3
 
@@ -20,6 +22,64 @@ from maxtrade.research import render_market_research
 from maxtrade.auth import require_chart_login
 
 
+def render_touch_zoom() -> None:
+    library = base64.b64encode(Path(__file__).with_name('hammer.min.js').read_bytes()).decode('ascii')
+    st.html('<script>if (!window.Hammer) { const library = document.createElement("script"); '
+            'library.textContent = atob("' + library + '"); document.head.appendChild(library); }' + '''
+    (() => {
+        const attach = () => {
+            const plot = document.querySelector('.st-key-candle_chart .js-plotly-plot')
+                || document.querySelector('[data-testid="stPlotlyChart"] .js-plotly-plot');
+            if (!plot || !window.Hammer || plot.maxtradePinch) return;
+            const manager = new Hammer.Manager(plot, {touchAction: 'pan-y'});
+            manager.add(new Hammer.Pinch({threshold: 0}));
+            let pinching = false;
+            const routeTouch = event => {
+                if (event.touches.length > 1) pinching = true;
+                if (!pinching) return;
+                event.preventDefault();
+                event.stopPropagation();
+                manager.input.handler(event);
+                if (!event.touches.length) pinching = false;
+            };
+            for (const type of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) {
+                plot.addEventListener(type, routeTouch, {capture: true, passive: false});
+            }
+            let previousScale = 1;
+            let originalZoom;
+            let originalCartesianZoom;
+            manager.on('pinchstart', () => {
+                previousScale = 1;
+                originalZoom = plot._context.scrollZoom;
+                originalCartesianZoom = plot._context._scrollZoom.cartesian;
+                plot._context.scrollZoom = true;
+                plot._context._scrollZoom.cartesian = true;
+            });
+            manager.on('pinchmove', event => {
+                const surface = plot.querySelector('.nsewdrag');
+                if (!surface || !Number.isFinite(event.scale) || event.scale <= 0) return;
+                const delta = -Math.log(event.scale / previousScale) * 600;
+                previousScale = event.scale;
+                surface.dispatchEvent(new WheelEvent('wheel', {
+                    bubbles: true, cancelable: true, deltaY: delta,
+                    clientX: event.center.x, clientY: event.center.y
+                }));
+            });
+            manager.on('pinchend pinchcancel', () => {
+                plot._context.scrollZoom = originalZoom;
+                plot._context._scrollZoom.cartesian = originalCartesianZoom;
+            });
+            plot.maxtradePinch = manager;
+        };
+        if (!window.maxtradeTouchObserver) {
+            window.maxtradeTouchObserver = new MutationObserver(attach);
+            window.maxtradeTouchObserver.observe(document.body, {childList: true, subtree: true});
+        }
+        attach();
+    })();
+    </script>''', unsafe_allow_javascript=True)
+
+
 def chart_workspace_url(product: str, pair: str, interval: str, preferences: dict) -> str:
     return '?' + urlencode({'view': 'chart', 'product': product, 'pair': pair, 'interval': interval,
                             'layout': json.dumps(preferences)})
@@ -28,14 +88,12 @@ def chart_workspace_url(product: str, pair: str, interval: str, preferences: dic
 def render_chart_page(workspace: bool = False) -> None:
     st.markdown('''<style>
         .block-container:has(.st-key-chart_market_header) > [data-testid="stVerticalBlock"] {gap:.45rem;}
-        .block-container:has(.st-key-chart_market_header) .desk-header {display:none;}
-        .block-container:has(.st-key-chart_market_header) [data-testid="stElementContainer"]:has(.desk-header) {display:none;}
         .st-key-chart_market_header [data-testid="stVerticalBlock"], .st-key-chart_toolbar [data-testid="stVerticalBlock"] {gap:0;}
         .st-key-chart_market_header button, .st-key-chart_toolbar button {min-height:36px !important;}
         .st-key-chart_market_header [data-baseweb="select"] > div {min-height:36px;}
         </style>''', unsafe_allow_html=True)
     if workspace:
-        st.markdown('<style>.block-container {max-width: none; padding: 1rem;} .desk-header {display:none;} header[data-testid="stHeader"] {display:none;}</style>', unsafe_allow_html=True)
+        st.markdown('<style>.block-container {max-width: none; padding: 1rem;} header[data-testid="stHeader"] {display:none;}</style>', unsafe_allow_html=True)
         if st.button('Back to desk', icon=':material/arrow_back:', key='chart_back'):
             st.query_params.pop('view', None)
             st.session_state['navigation'] = 'Chart'
@@ -61,7 +119,11 @@ def render_chart_controls(workspace: bool = False) -> tuple[str, str, str, bool]
             st.session_state['chart_underlying'] = pair
         elif pair.startswith('B-') and len(pair) <= 64 and all(character.isalnum() or character in '-_' for character in pair):
             name = pair[2:].replace('_', '') if product == 'Spot' else pair
-            st.session_state[f'chart_catalog_{product}'] = {name: pair}
+            catalog = dict(st.session_state.get(f'chart_catalog_{product}', {
+                'BTCUSDT' if product == 'Spot' else 'B-BTC_USDT': 'B-BTC_USDT',
+                'ETHUSDT' if product == 'Spot' else 'B-ETH_USDT': 'B-ETH_USDT'}))
+            catalog[name] = pair
+            st.session_state[f'chart_catalog_{product}'] = catalog
             st.session_state[f'chart_market_{product}'] = name
         try:
             preferences = json.loads(st.query_params.get('layout', '{}'))
@@ -84,7 +146,7 @@ def render_chart_controls(workspace: bool = False) -> tuple[str, str, str, bool]
             pass
         st.session_state['chart_route_loaded'] = True
     if workspace:
-        st.markdown('<style>.block-container {max-width: none; padding: 1rem;} .desk-header {display:none;} header[data-testid="stHeader"] {display:none;}</style>', unsafe_allow_html=True)
+        st.markdown('<style>.block-container {max-width: none; padding: 1rem;} header[data-testid="stHeader"] {display:none;}</style>', unsafe_allow_html=True)
     st.markdown('''<style>
         .st-key-chart_interval [role="radiogroup"], .st-key-chart_product [role="radiogroup"] {flex-wrap:wrap !important; gap: .35rem;}
         .st-key-chart_interval [role="radiogroup"] > div, .st-key-chart_product [role="radiogroup"] > div {flex: 0 0 auto !important; min-width: 44px !important;}
@@ -434,6 +496,7 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
                                               "modeBarButtonsToRemove": ["select2d", "lasso2d", "autoScale2d"],
                                               "toImageButtonOptions": {"filename": "maxtrade_chart", "scale": 2}},
                     key="candle_chart")
+    render_touch_zoom()
     with st.popover('', icon=':material/download:', help='Chart exports'):
         st.download_button('Save interactive chart', figure.to_html(include_plotlyjs=True, full_html=True),
                        file_name='maxtrade-chart.html', mime='text/html', icon=':material/download:',

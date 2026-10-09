@@ -108,3 +108,27 @@ class OptionsTests(unittest.TestCase):
         app.select_slider[0].set_range(95000, 95000).run()
         self.assertFalse(app.exception)
         self.assertEqual(list(app.dataframe[0].value['Strike USD']), [95000])
+
+    def test_chain_requires_fresh_quotes_for_signal_comments(self):
+        from datetime import datetime, timedelta, timezone
+        from streamlit.testing.v1 import AppTest
+        now = datetime.now(timezone.utc)
+        preview = AppTest.from_function(chain_preview).run(timeout=10)
+        snapshot = preview.session_state['preview_chain_snapshot']
+        for quote_age, scan_age, expected in [(0, 0, 'WATCH CALL'), (0, 301, 'NOT SCANNED'),
+                                              (301, 0, 'UNAVAILABLE')]:
+            with self.subTest(quote_age=quote_age, scan_age=scan_age):
+                snapshot['fetched'] = now.isoformat()
+                for row in snapshot['rows']:
+                    row['CALL quote status'] = 'CURRENT'
+                    row['CALL quote UTC'] = (now - timedelta(seconds=quote_age)).isoformat()
+                app = AppTest.from_string('from maxtrade.options import render_option_chain\n'
+                                         'render_option_chain("BTC", "chart")')
+                app.session_state['chart_snapshot'] = {'contracts': [{
+                    'Market': 'CALL', 'Source': 'Deribit', 'Signal': 'WATCH CALL',
+                    'Reason': 'CALL ko watch karein; buy approval nahi.',
+                    'Quote UTC': (now - timedelta(seconds=scan_age)).isoformat()}]}
+                app.session_state['chart_chain_snapshot'] = snapshot
+                app.run()
+                self.assertFalse(app.exception)
+                self.assertEqual(set(app.dataframe[0].value['CALL signal']), {expected})

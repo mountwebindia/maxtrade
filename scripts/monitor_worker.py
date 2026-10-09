@@ -51,10 +51,10 @@ def monitor_once(database: Path, secrets: Path, state: Path, now: datetime,
             configuration = telegram_config(secrets=tomllib.load(source))
         if configuration is None:
             raise ValueError('Monitor Telegram configuration unavailable')
-        message = ('MaxTrade worker monitor | PAPER ONLY\n'
-                   + ('Worker healthy' if status == 'healthy' else status)
+        message = ('MaxTrade worker monitor | Sirf PAPER simulation\n'
+               + ('Worker sahi chal raha hai.' if status == 'healthy' else 'Worker check mein dikkat mili: ' + status)
                    + '\n' + now.isoformat()
-                   + '\nVM-local monitor; whole-VM/network outages cannot be detected here.')
+               + '\nYeh VM-local monitor hai; poore VM ya network ki outage yahan detect nahi hoti.')
         send_message(configuration, message)
         state.parent.mkdir(parents=True, exist_ok=True)
         temporary = state.with_suffix('.tmp')

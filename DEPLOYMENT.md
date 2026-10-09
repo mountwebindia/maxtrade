@@ -1,5 +1,18 @@
 # Compact Dashboard
 
+Chart workspaces retain the shared icon-only header. Two-finger chart zoom uses
+the bundled MIT-licensed Hammer recognizer with Plotly's existing wheel zoom;
+the wheel preference is restored after each gesture. Spot and Futures scans
+offer single-coin selection; Refresh coins loads the active CoinDCX catalog.
+Signal cards use directional green/red glossy surfaces. Options chain rows
+include signal status and comments only while both quote and scan are fresh.
+WATCH CALL/PUT remains research-only, never buy approval.
+
+Telegram delivery, reports, PAPER lifecycle messages and monitor messages use
+Hinglish. Original technical risk-engine evidence remains unchanged. Dashboard
+deployment alone does not update pinned workers; a separately approved worker
+and monitor rollout is required for their live notifications.
+
 The dashboard uses a wider desktop workspace, compact typography and metrics,
 wrapping mobile columns, and persistent mobile bottom navigation. Chart display
 settings and past signal records are collapsed by default; saved preferences

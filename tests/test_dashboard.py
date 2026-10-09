@@ -9,6 +9,27 @@ from maxtrade.settings import azure_openai_config, credential_status
 
 
 class DashboardTests(unittest.TestCase):
+    def test_directional_cards_and_options_comments_are_visible(self):
+        for action, style in [('LONG', 'long'), ('SHORT', 'short'), ('WATCH CALL', 'long'), ('WATCH PUT', 'short')]:
+            row = {'Market': 'BTC', 'Signal': action, 'Reason': 'Verified reason'}
+            if action.startswith('WATCH'):
+                row['Source'] = 'Deribit'
+            card = signal_card(row)
+            self.assertIn(f'signal-{style}', card)
+            self.assertIn('Verified reason', card)
+            if action.startswith('WATCH'):
+                self.assertIn('buy approval nahi', card)
+
+    def test_shared_chart_route_keeps_alternative_coins(self):
+        def render():
+            from maxtrade.chart_page import render_chart_controls
+            render_chart_controls(workspace=True)
+        app = AppTest.from_function(render)
+        app.query_params.update({'view': 'chart', 'product': 'Spot', 'pair': 'B-BTC_USDT'})
+        app.run()
+        self.assertFalse(app.exception)
+        self.assertIn('ETHUSDT', app.selectbox(key='chart_market_Spot').options)
+
     def test_market_list_search_and_session_stars(self):
         def render():
             from maxtrade.presentation import render_market_list
@@ -532,7 +553,7 @@ class DashboardTests(unittest.TestCase):
             patch("maxtrade.coindcx.CoinDCXClient"), patch("maxtrade.history.ScanHistory") as history:
             history.return_value.worker_status.return_value = None
             app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=20).run()
-            app.button[0].click().run()
+            next(button for button in app.button if button.label == 'Scan markets now').click().run()
             app.radio(key='live_view').set_value('Cards').run()
             next(widget for widget in app.selectbox if widget.label == "Signal filter").select("Candidates").run()
             cards = next(item.value for item in app.markdown if 'class="signal-grid"' in item.value)

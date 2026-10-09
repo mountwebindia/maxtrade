@@ -84,6 +84,25 @@ class CandleTests(unittest.TestCase):
 
 
 class ScannerTests(unittest.TestCase):
+    def test_selected_market_excludes_other_spot_and_futures_coins(self):
+        client = CoinDCXClient()
+        self.addCleanup(client.session.close)
+        with patch.object(client, 'spot_markets', return_value=[
+                {'coindcx_name': name, 'pair': name, 'status': 'active', 'base_currency_short_name': 'USDT'}
+                for name in ('BTCUSDT', 'ETHUSDT')]), \
+                patch.object(client, 'spot_tickers', return_value=[
+                    {'market': name, 'volume': 10, 'last_price': 100} for name in ('BTCUSDT', 'ETHUSDT')]), \
+                patch.object(client, 'spot_candles', side_effect=ValueError('test quote unavailable')) as candles:
+            rows = scan_spot(client, '1h', 5, market='ETHUSDT')
+            self.assertEqual([row['Market'] for row in rows], ['ETHUSDT'])
+            candles.assert_called_once_with('ETHUSDT', '1h')
+        with patch.object(client, 'futures_instruments', return_value=['B-BTC_USDT', 'B-ETH_USDT']), \
+                patch.object(client, 'futures_tickers', return_value={'B-BTC_USDT': {'v': 100}, 'B-ETH_USDT': {'v': 10}}), \
+                patch.object(client, 'futures_candles', side_effect=ValueError('test quote unavailable')) as candles:
+            rows = scan_futures(client, '1h', 5, market='B-ETH_USDT')
+            self.assertEqual([row['Market'] for row in rows], ['B-ETH_USDT'])
+            candles.assert_called_once_with('B-ETH_USDT', '1h')
+
     def test_empty_discovery_is_an_explicit_error(self):
         client = CoinDCXClient()
         with patch.object(client, "spot_markets", return_value=[]), patch.object(client, "spot_tickers", return_value=[]):

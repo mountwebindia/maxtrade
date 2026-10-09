@@ -11,7 +11,7 @@ from maxtrade.chart_page import render_chart_page
 from maxtrade.history import ScanHistory
 from maxtrade.options import DeribitClient, scan_options, render_option_chain
 from maxtrade.presentation import signal_card
-from maxtrade.scanner import scan_futures, scan_spot
+from maxtrade.scanner import QUOTE_CURRENCIES, scan_futures, scan_spot
 from maxtrade.settings import credential_status
 from maxtrade.auth import sign_out, require_login
 
@@ -200,7 +200,14 @@ st.markdown(
     [data-testid="stRadioOption"] { background: transparent !important; border: 1px solid var(--line); }
     [data-testid="stRadioOption"]:has(input:checked) { background: #edf3ff !important; color: #2864ef !important; border-color: #2864ef; }
     [data-testid="stButton"] button[kind="primary"] { background: #2864ef; border-color: #2864ef; }
-    .signal-card { border: 0; border-bottom: 1px solid var(--line); border-radius: 0; }
+    .signal-card { border: 1px solid #d5dfe5; border-radius: 8px; background:linear-gradient(135deg,#ffffff,#edf2f6); box-shadow:inset 0 1px 0 #fff,0 3px 10px #192b3010; }
+    .signal-card.signal-long {background:linear-gradient(135deg,#ffffff,#d4f2e2);border-color:#91ccb0;}
+    .signal-card.signal-short {background:linear-gradient(135deg,#ffffff,#fbd8df);border-color:#e9a3b1;}
+    .signal-card.signal-error {background:linear-gradient(135deg,#fff,#ffe7cf);border-color:#dcb68d;}
+    .desk-header, [data-testid="stMetric"], [data-testid="stSidebar"] {background:linear-gradient(135deg,#fff,#eef3f7);}
+    .brand-mark {background:linear-gradient(145deg,#4387fa,#1851c9);box-shadow:inset 0 1px 0 #ffffff80;}
+    .st-key-signals_controls [data-testid="stHorizontalBlock"], [class*="_signal_tools"] [data-testid="stHorizontalBlock"] {align-items:flex-end;}
+    @media(max-width:640px) {.st-key-signals_controls [data-testid="stColumn"] {flex:1 1 calc(50% - .5rem) !important;min-width:0 !important;}}
     .st-key-chart_product, .st-key-chart_interval { background: #fff; }
     [data-testid="stPlotlyChart"] { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
     @media (max-width: 640px) {
@@ -212,8 +219,7 @@ st.markdown(
         .market-ohlc { gap: 1rem; }
     }
     </style>
-    <div class="desk-header"><div class="desk-brand"><div class="brand-mark" aria-hidden="true">M</div><div><div class="desk-title">MaxTrade</div>
-    <div class="desk-subtitle">CoinDCX / Deribit</div></div></div><span class="research-status">Research only</span></div>
+    <div class="desk-header"><div class="desk-brand"><div class="brand-mark" role="img" aria-label="MaxTrade">M</div></div></div>
     """,
     unsafe_allow_html=True,
 )
@@ -227,7 +233,7 @@ def select_page(page: str) -> None:
     st.session_state["navigation"] = page
 
 with st.sidebar:
-    st.markdown('<div class="desk-header"><div class="desk-brand"><div class="brand-mark" aria-hidden="true">M</div><div><div class="desk-title">MaxTrade</div><div class="desk-subtitle">Research desk</div></div></div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="desk-header"><div class="desk-brand"><div class="brand-mark" role="img" aria-label="MaxTrade">M</div></div></div>', unsafe_allow_html=True)
     for page, icon in [("Signals", "radar"), ("Chart", "candlestick_chart"), ("History", "history"), ("Settings", "tune")]:
         st.button(page, icon=f":material/{icon}:", key=f"menu_{page.lower()}",
                   type="primary" if st.session_state.get("navigation", "Signals") == page else "secondary",
@@ -239,10 +245,32 @@ with st.sidebar:
 signals_tab, chart_tab, history_tab, api_tab = st.tabs(["Signals", "Chart", "History", "Settings"], key="navigation", on_change="rerun")
 with signals_tab:
     product = st.radio("Market type", ["Spot", "Futures", "Options"], horizontal=True, label_visibility="collapsed", key="market_type", width="stretch")
-    controls = st.columns([1, 1, 1] if product == "Options" else [1, 1])
+    with st.container(key='signals_controls'):
+        controls = st.columns([1, 1, 1])
     interval = controls[0].selectbox("Timeframe", ["1h", "4h"])
     limit = controls[1].selectbox("Scan limit", [5, 10, 15, 20, 25, 30], index=1)
     currency = controls[2].selectbox("Underlying", ["BTC", "ETH"]) if product == "Options" else None
+    selected_market = None
+    if product != 'Options':
+        catalog_key = f'signal_catalog_{product}'
+        catalog = st.session_state.get(catalog_key, ['BTCUSDT', 'ETHUSDT'] if product == 'Spot' else ['B-BTC_USDT', 'B-ETH_USDT'])
+        selected_market = controls[2].selectbox('Coin', ['All markets', *catalog], key=f'signal_coin_{product}')
+        if st.button('Refresh coins', icon=':material/refresh:', key='signal_coins_refresh'):
+            client = CoinDCXClient()
+            try:
+                if product == 'Spot':
+                    catalog = sorted({item['coindcx_name'] for item in client.spot_markets()
+                                      if item.get('status') == 'active' and item.get('base_currency_short_name') in QUOTE_CURRENCIES
+                                      and item.get('coindcx_name')})
+                else:
+                    catalog = sorted(set(client.futures_instruments()))
+                st.session_state[catalog_key] = catalog
+                st.rerun()
+            except Exception as error:
+                st.warning(f'Coin list unavailable: {error}')
+            finally:
+                client.session.close()
+        selected_market = None if selected_market == 'All markets' else selected_market
     gold_only = st.selectbox("Asset group", ["All markets", "Gold-backed tokens"], key="scan_asset_group") == "Gold-backed tokens" if product != "Options" else False
     if gold_only:
         st.caption("PAXG / XAUT · gold-backed tokens · active CoinDCX markets only, not gold options")
@@ -251,11 +279,10 @@ with signals_tab:
     else:
         st.caption(f"CoinDCX · {product.lower()} · {interval} candles")
     scan = st.button("Scan markets now", type="primary", width="stretch", icon=":material/radar:")
-    if product == 'Options':
-        render_option_chain(currency, 'signals')
 
 def show_signals(rows: list[dict], key: str) -> None:
-    tools = st.columns([1, 1])
+    with st.container(key=f'{key}_signal_tools'):
+        tools = st.columns([1, 1])
     view = tools[0].radio("Display", ["List", "Cards", "Table"], horizontal=True, key=f"{key}_view", label_visibility="collapsed", width="stretch")
     selected_filter = tools[1].selectbox("Signal filter", ["All signals", "Candidates", "No trade", "Data errors"], key=f"{key}_filter", label_visibility="collapsed")
     actions = {"Candidates": {"LONG", "SHORT", "WATCH CALL", "WATCH PUT"}, "No trade": {"NO TRADE"}, "Data errors": {"DATA ERROR"}}
@@ -285,15 +312,16 @@ with signals_tab:
             if product == "Options":
                 results = scan_options(client, currency, interval, limit, progress=report_progress)
             elif product == "Spot":
-                results = scan_spot(client, interval, limit, progress=report_progress, **({"gold_only": True} if gold_only else {}))
+                results = scan_spot(client, interval, limit, progress=report_progress, **({"gold_only": True} if gold_only else {}), **({'market': selected_market} if selected_market else {}))
             else:
-                results = scan_futures(client, interval, limit, progress=report_progress, **({"gold_only": True} if gold_only else {}))
+                results = scan_futures(client, interval, limit, progress=report_progress, **({"gold_only": True} if gold_only else {}), **({'market': selected_market} if selected_market else {}))
             st.session_state["scan_results"] = results
             st.session_state["scan_product"] = product
             st.session_state["scan_interval"] = interval
             st.session_state["scan_limit"] = limit
             st.session_state["scan_currency"] = currency
             st.session_state["scan_gold_only"] = gold_only
+            st.session_state['scan_market'] = selected_market
             st.session_state["scan_time"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
             try:
                 scan_id = ScanHistory().save(product, interval, limit, st.session_state["scan_time"], results)
@@ -307,6 +335,9 @@ with signals_tab:
             client.session.close()
             progress_bar.empty()
 
+ if product == 'Options':
+    render_option_chain(currency, 'signals')
+
  results = st.session_state.get("scan_results", [])
  if results:
     if (
@@ -315,6 +346,7 @@ with signals_tab:
         or st.session_state.get("scan_limit") != limit
         or st.session_state.get("scan_currency") != currency
         or st.session_state.get("scan_gold_only", False) != gold_only
+        or st.session_state.get('scan_market') != selected_market
     ):
         st.info("Settings changed. Run a scan to load matching signals.")
     else:

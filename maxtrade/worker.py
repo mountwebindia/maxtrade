@@ -93,9 +93,9 @@ def run_once(path: Path, symbols: list[str], ai_config: AzureOpenAIConfig | None
             fingerprint = hashlib.sha256(json.dumps([symbol, report["technical_bias"], report["blockers"],
                 [(item["interval"], item["event_time"]) for item in report["evidence"]]], sort_keys=True).encode()).hexdigest()
             history.save_alert(fingerprint, report["created_at"], symbol,
-                               f"Technical: {report['technical_bias']} | Paper: {report['decision']} | "
-                               + (f"Queued position #{report['paper_position_id']} | " if report.get('paper_position_id') else '')
-                               + "; ".join(report["blockers"]))
+                               f"Technical direction: {report['technical_bias']} | PAPER faisla: {report['decision']} | "
+                               + (f"Position #{report['paper_position_id']} queue mein hai | " if report.get('paper_position_id') else 'Abhi paper entry nahi | ')
+                               + 'Risk-check details: ' + "; ".join(report["blockers"]))
             logging.info("Research saved for %s: %s", symbol, report["decision"])
         except Exception:
             errors += 1
@@ -116,9 +116,10 @@ def run_once(path: Path, symbols: list[str], ai_config: AzureOpenAIConfig | None
                 continue
             history.save_alert(f"paper-position:{position['id']}:{position['state']}",
                                position['closed_at'] or position['opened_at'] or position['submitted_at'],
-                               position['symbol'], f"Paper #{position['id']} {position['state']} | "
-                               f"Entry: {position['entry']} | Stop: {position['stop']} | Target: {position['target']} | "
-                               f"Exit: {position['exit']} | Net P&L: {position['pnl']} USDT | {position['reason']}")
+                               position['symbol'], f"Paper #{position['id']} {position['state']} - "
+                               + {'OPEN': 'position khul gayi', 'CLOSED': 'position band ho gayi', 'CANCELLED': 'entry cancel ho gayi'}[position['state']] + ' | '
+                               + f"Entry: {position['entry']} | Stop: {position['stop']} | Target: {position['target']} | "
+                               f"Exit: {position['exit']} | Net P&L: {position['pnl']} USDT | Karan (risk engine): {position['reason']}")
         configuration = notification_config or telegram_config()
         save_daily_summary(history, ledger, datetime.now(timezone.utc))
         save_daily_summary(history, ledger, datetime.now(timezone.utc), days_ago=2)

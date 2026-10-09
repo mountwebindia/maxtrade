@@ -150,6 +150,37 @@ def render_option_chain(currency: str, key: str) -> None:
                          format_func=lambda value: datetime.fromisoformat(value).strftime('%d %b %Y · %H:%M UTC'),
                          key=expiry_key)
     rows = [row for row in snapshot['rows'] if row['Expiry UTC'] == expiry]
+    scan_rows = (st.session_state.get('scan_results', [])
+                 if key == 'signals' and st.session_state.get('scan_product') == 'Options'
+                 and st.session_state.get('scan_currency') == currency
+                 else st.session_state.get('chart_snapshot', {}).get('contracts', []) if key == 'chart' else [])
+    signals = {row['Market']: row for row in scan_rows if row.get('Source') == 'Deribit'}
+    now = datetime.now(timezone.utc)
+    def fresh(value: str | None, maximum_age: int) -> bool:
+        try:
+            age = (now - datetime.fromisoformat(value)).total_seconds()
+            return -30 <= age <= maximum_age
+        except (TypeError, ValueError):
+            return False
+
+    annotated = []
+    for original in rows:
+        row = dict(original)
+        for side in ('CALL', 'PUT'):
+            signal = signals.get(row.get(f'{side} contract'))
+            current = (row.get(f'{side} quote status') == 'CURRENT'
+                       and fresh(snapshot['fetched'], 60)
+                       and fresh(row.get(f'{side} quote UTC'), 300)
+                       and datetime.fromisoformat(expiry) > now)
+            if signal and not fresh(signal.get('Quote UTC'), 300):
+                signal = None
+            if not current and row.get(f'{side} quote status') == 'CURRENT':
+                row[f'{side} quote status'] = 'STALE'
+            row[f'{side} signal'] = signal.get('Signal', 'NOT SCANNED') if signal and current else 'NOT SCANNED' if current else 'UNAVAILABLE'
+            row[f'{side} comment'] = (signal.get('Reason', '') if signal and current else
+                                      'Run a contract scan; buy approval nahi.' if current else 'Quote stale ya unavailable; entry nahi.')
+        annotated.append(row)
+    rows = annotated
     strikes = sorted({row['Strike USD'] for row in rows})
     range_key = f'{key}_chain_strikes'
     selection = (currency, expiry, tuple(strikes))
@@ -164,8 +195,8 @@ def render_option_chain(currency: str, key: str) -> None:
     metrics[0].metric('Strikes', len(rows))
     metrics[1].metric('CALL contracts', sum(bool(row.get('CALL contract')) for row in rows))
     metrics[2].metric('PUT contracts', sum(bool(row.get('PUT contract')) for row in rows))
-    columns = ['CALL quote status', 'CALL volume', 'CALL OI', 'CALL IV %', 'CALL bid', 'CALL mark', 'CALL ask',
-               'Strike USD', 'PUT bid', 'PUT mark', 'PUT ask', 'PUT IV %', 'PUT OI', 'PUT volume', 'PUT quote status']
+    columns = ['CALL signal', 'CALL comment', 'CALL quote status', 'CALL volume', 'CALL OI', 'CALL IV %', 'CALL bid', 'CALL mark', 'CALL ask',
+               'Strike USD', 'PUT bid', 'PUT mark', 'PUT ask', 'PUT IV %', 'PUT OI', 'PUT volume', 'PUT quote status', 'PUT signal', 'PUT comment']
     table = pd.DataFrame(rows).reindex(columns=columns).sort_values('Strike USD')
     styled = table.style.set_properties(subset=['Strike USD'], **{'font-weight': 'bold', 'background-color': '#263238', 'color': '#ffffff'})
     st.dataframe(styled, hide_index=True, width='stretch', height=480,

@@ -35,13 +35,15 @@ def _volume(ticker: dict[str, Any]) -> float:
 
 def scan_spot(client: CoinDCXClient, interval: str, limit: int,
               progress: Callable[[int, int, str], None] | None = None,
-              gold_only: bool = False) -> list[dict[str, Any]]:
+              gold_only: bool = False, market: str | None = None) -> list[dict[str, Any]]:
+    selected_market = market
     markets = {
         market.get("coindcx_name"): market
         for market in client.spot_markets()
         if market.get("status") == "active"
         and market.get("base_currency_short_name") in QUOTE_CURRENCIES
         and market.get("coindcx_name")
+        and (selected_market is None or market.get("coindcx_name") == selected_market)
         and (not gold_only or market.get("target_currency_short_name") in {"PAXG", "XAUT"})
     }
     tickers = {
@@ -97,12 +99,13 @@ def scan_spot(client: CoinDCXClient, interval: str, limit: int,
 
 def scan_futures(client: CoinDCXClient, interval: str, limit: int,
                  progress: Callable[[int, int, str], None] | None = None,
-                 gold_only: bool = False) -> list[dict[str, Any]]:
+                 gold_only: bool = False, market: str | None = None) -> list[dict[str, Any]]:
     instruments = client.futures_instruments()
     tickers = client.futures_tickers()
     # Use reported volume only as a discovery heuristic, not a liquidity guarantee.
     selected = sorted(
         (pair for pair in instruments if pair in tickers
+         and (market is None or pair == market)
          and (not gold_only or pair.split("_")[0] in {"B-PAXG", "B-XAUT"})),
         key=lambda pair: _volume({"volume": tickers[pair].get("v", 0)}),
         reverse=True,
