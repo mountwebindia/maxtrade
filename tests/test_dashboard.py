@@ -83,6 +83,9 @@ class DashboardTests(unittest.TestCase):
         self.assertFalse(app.exception)
         self.assertEqual(app.selectbox(key='chart_theme').value, 'Dark')
         self.assertTrue(app.toggle(key='chart_signals').value)
+        self.assertFalse(app.toggle(key='chart_wheel_zoom').value)
+        app.toggle(key='chart_wheel_zoom').set_value(True).run()
+        self.assertTrue(app.toggle(key='chart_wheel_zoom').value)
 
     def test_chart_only_controls_preserve_selection_and_hide_dashboard_research(self):
         def render():
@@ -92,11 +95,18 @@ class DashboardTests(unittest.TestCase):
                 render_chart_page(workspace=True)
                 research.assert_not_called()
         app = AppTest.from_function(render)
-        app.query_params.update({'view': 'chart', 'product': 'Options', 'pair': 'ETH', 'interval': '15m'})
+        import json
+        layout = {'chart_wheel_zoom': True, 'chart_window': 'Custom UTC range',
+              'chart_from': '2026-10-07T00:00:00+00:00', 'chart_to': '2026-10-08T00:00:00+00:00'}
+        app.query_params.update({'view': 'chart', 'product': 'Options', 'pair': 'ETH', 'interval': '15m',
+                    'layout': json.dumps(layout)})
         app.run(timeout=15)
         self.assertFalse(app.exception)
         self.assertEqual(app.radio(key='chart_interval').value, '15m')
         self.assertEqual(app.selectbox(key='chart_underlying').value, 'ETH')
+        self.assertTrue(app.toggle(key='chart_wheel_zoom').value)
+        self.assertEqual(app.selectbox(key='chart_window').value, 'Custom UTC range')
+        self.assertEqual(json.loads(app.query_params['layout'])['chart_from'], layout['chart_from'])
         self.assertNotIn('Chart settings', [item.label for item in app.expander])
         app.radio(key='chart_interval').set_value('5m').run()
         self.assertFalse(app.exception)
@@ -105,6 +115,11 @@ class DashboardTests(unittest.TestCase):
         app.selectbox(key='chart_custom_minutes').select(120).run()
         self.assertFalse(app.exception)
         self.assertEqual(app.query_params['interval'], '120m')
+        self.assertEqual(app.selectbox(key='chart_underlying').value, 'ETH')
+        app.button(key='chart_back').click().run()
+        self.assertFalse(app.exception)
+        self.assertNotIn('view', app.query_params)
+        self.assertEqual(app.session_state['navigation'], 'Chart')
         self.assertEqual(app.selectbox(key='chart_underlying').value, 'ETH')
 
     def test_options_minute_workspace_uses_underlying_feed_without_research(self):

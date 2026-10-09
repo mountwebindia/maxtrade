@@ -36,6 +36,10 @@ def render_chart_page(workspace: bool = False) -> None:
         </style>''', unsafe_allow_html=True)
     if workspace:
         st.markdown('<style>.block-container {max-width: none; padding: 1rem;} .desk-header {display:none;} header[data-testid="stHeader"] {display:none;}</style>', unsafe_allow_html=True)
+        if st.button('Back to desk', icon=':material/arrow_back:', key='chart_back'):
+            st.query_params.pop('view', None)
+            st.session_state['navigation'] = 'Chart'
+            st.rerun()
     product, interval, pair, live = render_chart_controls(workspace)
     st.fragment(run_every='10s' if live else None)(render_chart_snapshot)(product, interval, pair, live, workspace)
     if not workspace:
@@ -63,7 +67,9 @@ def render_chart_controls(workspace: bool = False) -> tuple[str, str, str, bool]
             preferences = json.loads(st.query_params.get('layout', '{}'))
             choices = {'chart_style': ['Candles', 'Line', 'Area'], 'chart_theme': ['Dark', 'Light'],
                        'chart_visible': [40, 80, 120], 'chart_log': [True, False],
-                       'chart_signals': [True, False], 'chart_paper_fills': [True, False]}
+                       'chart_signals': [True, False], 'chart_paper_fills': [True, False],
+                       'chart_wheel_zoom': [True, False],
+                       'chart_window': ['Latest candles', 'All loaded candles', 'Custom UTC range']}
             if isinstance(preferences, dict):
                 for key, options in choices.items():
                     if preferences.get(key) in options:
@@ -71,6 +77,9 @@ def render_chart_controls(workspace: bool = False) -> tuple[str, str, str, bool]
                 indicators = preferences.get('chart_indicators')
                 if isinstance(indicators, list) and all(value in CHART_INDICATORS for value in indicators):
                     st.session_state['chart_indicators'] = indicators
+                for key in ('chart_from', 'chart_to'):
+                    if isinstance(preferences.get(key), str) and len(preferences[key]) <= 64:
+                        st.session_state[key] = preferences[key]
         except (ValueError, TypeError):
             pass
         st.session_state['chart_route_loaded'] = True
@@ -160,13 +169,17 @@ def render_chart_controls(workspace: bool = False) -> tuple[str, str, str, bool]
         toggles[0].toggle("Log price scale", key="chart_log")
         toggles[1].toggle('BUY / SELL setups', value=True, key='chart_signals')
         toggles[2].toggle('Saved paper fills', value=True, key='chart_paper_fills')
+        st.toggle('Wheel zoom', key='chart_wheel_zoom')
         st.selectbox('Time window', ['Latest candles', 'All loaded candles', 'Custom UTC range'], key='chart_window')
         if st.session_state['chart_window'] == 'Custom UTC range':
             dates = st.columns(2)
             dates[0].text_input('From (UTC)', placeholder='2026-10-07T00:00:00+00:00', key='chart_from')
             dates[1].text_input('To (UTC)', placeholder='2026-10-07T12:00:00+00:00', key='chart_to')
     preferences = {key: st.session_state[key] for key in ('chart_style', 'chart_theme', 'chart_visible',
-                   'chart_indicators', 'chart_log', 'chart_signals', 'chart_paper_fills')}
+                   'chart_indicators', 'chart_log', 'chart_signals', 'chart_paper_fills',
+                   'chart_wheel_zoom', 'chart_window')}
+    if st.session_state['chart_window'] == 'Custom UTC range':
+        preferences.update({key: st.session_state[key] for key in ('chart_from', 'chart_to')})
     url = chart_workspace_url(product, pair, interval, preferences)
     if workspace:
         st.query_params.update({'product': product, 'pair': pair, 'interval': interval,
@@ -287,25 +300,25 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
         st.session_state['chart_price_zoom'] = 1.0
         st.session_state['chart_price_offset'] = 0.0
     st.session_state.setdefault('chart_price_offset', 0.0)
-    st.markdown('<style>.st-key-chart_price_controls [data-testid="stHorizontalBlock"] {flex-wrap:nowrap !important;}'
+    st.markdown('<style>.st-key-chart_price_controls [data-testid="stHorizontalBlock"] {flex-wrap:nowrap !important;gap:.25rem !important;}'
                 '.st-key-chart_price_controls [data-testid="stColumn"] {min-width:0 !important;flex:1 1 0 !important;}'
+                '.st-key-chart_price_controls button {padding:.25rem !important;}'
+                '@media(max-width:640px){[data-testid="stPlotlyChart"] .modebar-btn {padding:3px !important;}}'
                 '</style>', unsafe_allow_html=True)
     with st.container(key='chart_price_controls'):
-        scale_control, up_control, down_control, refresh_control = st.columns(4)
+        zoom_in_control, zoom_out_control, up_control, down_control, reset_control, refresh_control = st.columns(6)
     if up_control.button('', icon=':material/arrow_upward:', help='Pan price range up', key='chart_pan_up', width='stretch'):
         st.session_state['chart_price_offset'] += .3
     if down_control.button('', icon=':material/arrow_downward:', help='Pan price range down', key='chart_pan_down', width='stretch'):
         st.session_state['chart_price_offset'] -= .3
     refresh = refresh_control.button('', icon=':material/refresh:', help='Refresh chart', key='chart_refresh', width='stretch')
-    with scale_control.popover('', icon=':material/height:', help='Price scale', width='stretch'):
-        zoom_controls = st.columns(3)
-    if zoom_controls[0].button('', icon=':material/zoom_in:', help='Zoom in vertically', key='chart_zoom_in',
+    if zoom_in_control.button('', icon=':material/zoom_in:', help='Zoom in vertically', key='chart_zoom_in',
                                width='stretch', disabled=st.session_state['chart_price_zoom'] >= 8):
         st.session_state['chart_price_zoom'] = min(8.0, st.session_state['chart_price_zoom'] * 1.25)
-    if zoom_controls[1].button('', icon=':material/zoom_out:', help='Zoom out vertically', key='chart_zoom_out',
+    if zoom_out_control.button('', icon=':material/zoom_out:', help='Zoom out vertically', key='chart_zoom_out',
                                width='stretch', disabled=st.session_state['chart_price_zoom'] <= .25):
         st.session_state['chart_price_zoom'] = max(.25, st.session_state['chart_price_zoom'] / 1.25)
-    if zoom_controls[2].button('', icon=':material/fit_screen:', help='Reset price scale', key='chart_zoom_reset', width='stretch'):
+    if reset_control.button('', icon=':material/fit_screen:', help='Reset price scale', key='chart_zoom_reset', width='stretch'):
         st.session_state['chart_price_zoom'] = 1.0
         st.session_state['chart_price_offset'] = 0.0
     previous = st.session_state.get("chart_snapshot")
@@ -415,10 +428,10 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
     if workspace:
         figure.update_layout(height=620)
     st.plotly_chart(figure,
-                    width="stretch", config={"displaylogo": False, "scrollZoom": False,
+                    width="stretch", config={"displaylogo": False, "scrollZoom": st.session_state.get('chart_wheel_zoom', False),
                                               "displayModeBar": True,
                                               "modeBarButtonsToAdd": ["drawline", "drawrect", "drawopenpath", "eraseshape"],
-                                              "modeBarButtonsToRemove": ["select2d", "lasso2d", "zoom2d", "zoomIn2d", "zoomOut2d", "autoScale2d"],
+                                              "modeBarButtonsToRemove": ["select2d", "lasso2d", "autoScale2d"],
                                               "toImageButtonOptions": {"filename": "maxtrade_chart", "scale": 2}},
                     key="candle_chart")
     with st.popover('', icon=':material/download:', help='Chart exports'):
