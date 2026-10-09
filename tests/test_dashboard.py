@@ -137,9 +137,15 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(app.session_state['chart_price_zoom'], 1.25)
         app.button(key='chart_zoom_out').click().run(timeout=15)
         self.assertEqual(app.session_state['chart_price_zoom'], 1.0)
+        app.button(key='chart_pan_up').click().run(timeout=15)
+        self.assertEqual(app.session_state['chart_price_offset'], .3)
+        app.button(key='chart_pan_down').click().run(timeout=15)
+        self.assertEqual(app.session_state['chart_price_offset'], 0.0)
+        app.button(key='chart_pan_up').click().run(timeout=15)
         app.button(key='chart_zoom_in').click().run(timeout=15)
         app.button(key='chart_zoom_reset').click().run(timeout=15)
         self.assertEqual(app.session_state['chart_price_zoom'], 1.0)
+        self.assertEqual(app.session_state['chart_price_offset'], 0.0)
 
     def test_chart_workspace_url_contains_only_selection_and_layout(self):
         import json
@@ -470,6 +476,9 @@ class DashboardTests(unittest.TestCase):
             client.return_value.underlying_candles.side_effect = ValueError("Feed unavailable")
             next(button for button in app.button if button.key == "chart_refresh").click().run()
             self.assertFalse(app.exception)
+            self.assertEqual(len(app.get("plotly_chart")), 1)
+            self.assertTrue(any("showing saved snapshot" in warning.value for warning in app.warning))
+            next(widget for widget in app.selectbox if widget.label == "Chart underlying").select("BTC").run()
             self.assertEqual(len(app.get("plotly_chart")), 0)
             self.assertTrue(any("no signal generated" in error.value for error in app.error))
 

@@ -53,7 +53,7 @@ def candle_figure(candles: list[dict[str, Any]], analyses: list[TradeSignal],
                   theme: str = "Dark", logarithmic: bool = False, visible_bars: int = 80,
                   signals: list[dict[str, Any]] | None = None,
                   paper_positions: list[dict[str, Any]] | None = None,
-                  price_zoom: float = 1.0) -> go.Figure:
+                  price_zoom: float = 1.0, price_offset: float = 0.0) -> go.Figure:
     dates = [datetime.fromtimestamp(int(candle["time"]) / 1000, timezone.utc) for candle in candles]
     indicator_dates = dates[49:49 + len(analyses)]
     dark = theme == "Dark"
@@ -130,20 +130,28 @@ def candle_figure(candles: list[dict[str, Any]], analyses: list[TradeSignal],
                                        hovertemplate=label + ' #%{customdata[0]}<br>%{x}<br>Price %{y}'
                                        '<br>%{customdata[1]}<br>Net P&L %{customdata[2]}<extra>Saved simulation</extra>'), row=1, col=1)
     levels = [(float(candles[-1]['close']), 'Last price', foreground, 'dot')]
-    active_positions = [position for position in paper_positions or [] if position.get('state') == 'OPEN'
+    active_positions = [position for position in paper_positions or [] if position.get('state') in {'OPEN', 'PENDING'}
                         and not position.get('closed_at')]
     for position in active_positions:
         for field, label, color in [('entry', 'Entry', '#327ba5'), ('target', 'Take profit', rising),
                                     ('stop', 'Stop loss', falling)]:
             value = position.get(field)
             if value is not None and isfinite(float(value)) and float(value) > 0:
-                levels.append((float(value), f'PAPER #{position["id"]} {label}', color, 'dash'))
+                prefix = 'PENDING PAPER' if position['state'] == 'PENDING' else 'PAPER'
+                levels.append((float(value), f'{prefix} #{position["id"]} {label}', color, 'dash'))
     if signals is not None and analyses and analyses[-1].action in {'LONG', 'SHORT'}:
         latest = analyses[-1]
         for value, label, color in [(latest.entry, 'Entry', '#327ba5'), (latest.target, 'Take profit', rising),
                                     (latest.stop, 'Stop loss', falling)]:
             if value is not None and isfinite(float(value)) and float(value) > 0:
                 levels.append((float(value), f'Research {label}', color, 'dot'))
+    elif signals:
+        previous = signals[-1]
+        for field, label, color in [('Reference entry', 'Entry', '#327ba5'), ('Target', 'Take profit', rising),
+                                    ('Stop', 'Stop loss', falling)]:
+            value = previous.get(field)
+            if value is not None and isfinite(float(value)) and float(value) > 0:
+                levels.append((float(value), f'Previous setup {label}', color, 'dot'))
     for value, label, color, dash in levels:
         precision = 2 if value >= 1 else 8
         figure.add_hline(y=value, line_color=color, line_dash=dash, line_width=1,
@@ -181,7 +189,7 @@ def candle_figure(candles: list[dict[str, Any]], analyses: list[TradeSignal],
                         range=[dates[max(0, len(dates) - visible_bars)], dates[-1]])
     figure.update_yaxes(gridcolor=grid, fixedrange=False, side="right", showspikes=True)
     figure.update_yaxes(type="log" if logarithmic else "linear", row=1, col=1)
-    if not isfinite(price_zoom) or price_zoom <= 0:
+    if not isfinite(price_zoom) or price_zoom <= 0 or not isfinite(price_offset):
         raise ValueError('Price zoom must be positive and finite')
     visible_candles = candles[-visible_bars:]
     bounds = [float(bar[field]) for bar in visible_candles for field in ('low', 'high')]
@@ -191,8 +199,9 @@ def candle_figure(candles: list[dict[str, Any]], analyses: list[TradeSignal],
     lower, upper = min(bounds), max(bounds)
     center = (lower + upper) / 2
     radius = max((upper - lower) / 2, abs(center) * .001, .000001) * 1.08 / price_zoom
+    center += radius * price_offset
     figure.update_yaxes(range=[center - radius, center + radius], autorange=False,
-                        uirevision=f'price-{price_zoom}', row=1, col=1)
+                        uirevision=f'price-{price_zoom}-{price_offset}', row=1, col=1)
     domain_bottom, domain_top = figure.layout.yaxis.domain
     occupied = []
     for value, label, color, dash in sorted(levels, key=lambda level: level[0]):

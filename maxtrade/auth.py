@@ -116,12 +116,13 @@ def require_login() -> None:
         return
     if session:
         clear_session()
-    with st.form("login_form"):
-        st.subheader("Sign in")
-        st.text_input("Username", key="login_username", max_chars=128)
-        st.text_input("Password", type="password", key="login_password", max_chars=1024)
-        st.checkbox('Keep me signed in for 30 days', value=True, key='login_remember')
-        submitted = st.form_submit_button("Sign in", icon=":material/login:", type="primary", width="stretch")
+    with st.container(key="login_form"):
+        with st.form("login_form"):
+            st.subheader("Sign in")
+            st.text_input("Username", key="login_username", max_chars=128)
+            st.text_input("Password", type="password", key="login_password", max_chars=1024)
+            st.checkbox('Keep me signed in for 30 days', value=True, key='login_remember')
+            submitted = st.form_submit_button("Sign in", icon=":material/login:", type="primary", width="stretch")
     if submitted:
         username = st.session_state.pop("login_username", "")
         password = st.session_state.pop("login_password", "")

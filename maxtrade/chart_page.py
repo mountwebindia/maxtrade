@@ -26,6 +26,14 @@ def chart_workspace_url(product: str, pair: str, interval: str, preferences: dic
 
 
 def render_chart_page(workspace: bool = False) -> None:
+    st.markdown('''<style>
+        .block-container:has(.st-key-chart_market_header) > [data-testid="stVerticalBlock"] {gap:.45rem;}
+        .block-container:has(.st-key-chart_market_header) .desk-header {display:none;}
+        .block-container:has(.st-key-chart_market_header) [data-testid="stElementContainer"]:has(.desk-header) {display:none;}
+        .st-key-chart_market_header [data-testid="stVerticalBlock"], .st-key-chart_toolbar [data-testid="stVerticalBlock"] {gap:0;}
+        .st-key-chart_market_header button, .st-key-chart_toolbar button {min-height:36px !important;}
+        .st-key-chart_market_header [data-baseweb="select"] > div {min-height:36px;}
+        </style>''', unsafe_allow_html=True)
     if workspace:
         st.markdown('<style>.block-container {max-width: none; padding: 1rem;} .desk-header {display:none;} header[data-testid="stHeader"] {display:none;}</style>', unsafe_allow_html=True)
     product, interval, pair, live = render_chart_controls(workspace)
@@ -76,6 +84,7 @@ def render_chart_controls(workspace: bool = False) -> tuple[str, str, str, bool]
         .st-key-chart_refresh button {min-height: 40px;}
         </style>''', unsafe_allow_html=True)
     st.markdown('''<style>
+        .st-key-chart_interval {overflow:clip;}
         .st-key-chart_interval [role="radiogroup"] {flex-wrap:nowrap !important;overflow-x:auto;gap:.15rem;}
         .st-key-chart_interval [data-testid="stRadioOption"], .st-key-chart_product [data-testid="stRadioOption"] {min-height:36px !important;padding:.15rem .45rem !important;border:0;}
         .st-key-chart_interval [data-testid="stRadioOption"] p, .st-key-chart_product [data-testid="stRadioOption"] p {margin:0;font-size:.75rem;}
@@ -276,11 +285,17 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
     if st.session_state.get('chart_zoom_selection') != selection:
         st.session_state['chart_zoom_selection'] = selection
         st.session_state['chart_price_zoom'] = 1.0
+        st.session_state['chart_price_offset'] = 0.0
+    st.session_state.setdefault('chart_price_offset', 0.0)
     st.markdown('<style>.st-key-chart_price_controls [data-testid="stHorizontalBlock"] {flex-wrap:nowrap !important;}'
                 '.st-key-chart_price_controls [data-testid="stColumn"] {min-width:0 !important;flex:1 1 0 !important;}'
                 '</style>', unsafe_allow_html=True)
-    with st.container(width=100, key='chart_price_controls'):
-        scale_control, refresh_control = st.columns(2)
+    with st.container(key='chart_price_controls'):
+        scale_control, up_control, down_control, refresh_control = st.columns(4)
+    if up_control.button('', icon=':material/arrow_upward:', help='Pan price range up', key='chart_pan_up', width='stretch'):
+        st.session_state['chart_price_offset'] += .3
+    if down_control.button('', icon=':material/arrow_downward:', help='Pan price range down', key='chart_pan_down', width='stretch'):
+        st.session_state['chart_price_offset'] -= .3
     refresh = refresh_control.button('', icon=':material/refresh:', help='Refresh chart', key='chart_refresh', width='stretch')
     with scale_control.popover('', icon=':material/height:', help='Price scale', width='stretch'):
         zoom_controls = st.columns(3)
@@ -292,9 +307,10 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
         st.session_state['chart_price_zoom'] = max(.25, st.session_state['chart_price_zoom'] / 1.25)
     if zoom_controls[2].button('', icon=':material/fit_screen:', help='Reset price scale', key='chart_zoom_reset', width='stretch'):
         st.session_state['chart_price_zoom'] = 1.0
+        st.session_state['chart_price_offset'] = 0.0
     previous = st.session_state.get("chart_snapshot")
+    refresh_failed = False
     if refresh or live or not previous or previous["selection"] != selection:
-        st.session_state.pop("chart_snapshot", None)
         client = DeribitClient() if product == "Options" else CoinDCXClient()
         try:
             with st.spinner("Loading market candles…"):
@@ -323,7 +339,11 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
                     except (requests.RequestException, KeyError, TypeError, ValueError) as error:
                         st.session_state["chart_snapshot"]["contract_error"] = str(error)
         except (requests.RequestException, KeyError, TypeError, ValueError) as error:
-            st.error(f"Chart unavailable; no signal generated: {error}")
+            refresh_failed = True
+            if previous and previous['selection'] == selection:
+                st.warning(f"Refresh unavailable; showing saved snapshot from {previous['fetched']}: {error}")
+            else:
+                st.error(f"Chart unavailable; no signal generated: {error}")
         finally:
             client.session.close()
     snapshot = st.session_state.get("chart_snapshot")
@@ -344,15 +364,15 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
     ohlc = ''.join(f'<div><span>{field.upper()}</span><strong>{display_number(last[field], 2 if abs(last[field]) >= 1 else 8)}</strong></div>'
                    for field in ('open', 'high', 'low'))
     st.html(f'''<style>
-        .market-strip {{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-top:1px solid #dce5e8;border-bottom:1px solid #dce5e8;padding:.8rem 0;flex-wrap:wrap;}}
-        .market-quote strong {{font-size:1.6rem;font-variant-numeric:tabular-nums;}}
+        .market-strip {{display:flex;align-items:center;justify-content:space-between;gap:.4rem;border-top:1px solid #dce5e8;border-bottom:1px solid #dce5e8;padding:.35rem 0;flex-wrap:wrap;}}
+        .market-quote strong {{font-size:1.2rem;font-variant-numeric:tabular-nums;}}
         .market-quote small {{display:block;color:#64767b;font-size:.7rem;}}
-        .market-ohlc {{display:flex;gap:1.5rem;flex-wrap:wrap;}}
+        .market-ohlc {{display:flex;gap:.65rem;flex-wrap:wrap;}}
         .market-ohlc span {{display:block;color:#64767b;font-size:.65rem;}}
         .market-ohlc strong {{font-size:.8rem;font-variant-numeric:tabular-nums;}}
         </style><div class="market-strip"><div class="market-quote"><small>{escape(pair)} / {escape(interval)}</small>
     <strong>{quote}</strong> <span style="color:{'#00896b' if change >= 0 else '#db4056'}">{change:+.2f}%</span>
-    <small>{'Live · 10s' if live else 'Paused'} · {'Forming candle' if forming else 'Closed candle'} · Candle change</small></div>
+    <small>{'Saved snapshot' if refresh_failed else 'Live · 10s' if live else 'Paused'} · {'Forming candle' if forming else 'Closed candle'} · Candle change</small></div>
     <div class="market-ohlc">{ohlc}</div></div>''')
     style = st.session_state.get("chart_style", "Candles")
     theme = st.session_state.get("chart_theme", "Dark")
@@ -372,14 +392,15 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
                            logarithmic=logarithmic, visible_bars=visible,
                            signals=records if st.session_state.get('chart_signals', True) else None,
                            paper_positions=paper_positions,
-                           price_zoom=st.session_state['chart_price_zoom'])
+                           price_zoom=st.session_state['chart_price_zoom'],
+                           price_offset=st.session_state['chart_price_offset'])
     figure.update_layout(uirevision=repr((selection, style, indicators, logarithmic, visible)),
                           editrevision="|".join(selection))
     window = st.session_state.get('chart_window', 'Latest candles')
     figure.update_layout(uirevision=repr((selection, style, indicators, logarithmic, visible,
                                           window, st.session_state.get('chart_from'), st.session_state.get('chart_to'))))
     figure.update_yaxes(uirevision=repr((selection, style, logarithmic, visible,
-                                        st.session_state['chart_price_zoom'])), row=1, col=1)
+                                        st.session_state['chart_price_zoom'], st.session_state['chart_price_offset'])), row=1, col=1)
     if window == 'All loaded candles':
         figure.update_xaxes(autorange=True)
     elif window == 'Custom UTC range':
@@ -394,7 +415,7 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
     if workspace:
         figure.update_layout(height=620)
     st.plotly_chart(figure,
-                    width="stretch", config={"displaylogo": False, "scrollZoom": True,
+                    width="stretch", config={"displaylogo": False, "scrollZoom": False,
                                               "displayModeBar": True,
                                               "modeBarButtonsToAdd": ["drawline", "drawrect", "drawopenpath", "eraseshape"],
                                               "modeBarButtonsToRemove": ["select2d", "lasso2d", "zoom2d", "zoomIn2d", "zoomOut2d", "autoScale2d"],
@@ -410,6 +431,10 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
                            mime='text/csv', icon=':material/download:', key='chart_csv')
     if workspace:
         return
+    if latest.action not in {'LONG', 'SHORT'} and records and st.session_state.get('chart_signals', True):
+        st.caption(f"Previous {records[-1]['Signal']} setup levels · confirmed {records[-1]['Available at']} · historical, not a current entry.")
+    elif latest.action not in {'LONG', 'SHORT'} and not any(position['state'] in {'OPEN', 'PENDING'} for position in paper_positions):
+        st.caption('No active PAPER position or confirmed setup levels for this market.')
     with st.expander('Trade decision & PAPER risk', icon=':material/shield:'):
         render_trade_status(product, pair, latest, stale)
         st.caption(f"Last closed candle {close_time.isoformat(timespec='minutes')} · fetched {snapshot['fetched']}")

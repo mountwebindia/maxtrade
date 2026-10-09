@@ -69,7 +69,7 @@ class SignalTests(unittest.TestCase):
         analyses = chart_analysis(candles, '1h', True)
         positions = [{'id': 7, 'state': 'OPEN', 'entry': 105, 'stop': 95, 'target': 120},
                      {'id': 8, 'state': 'CLOSED', 'stop': 1, 'target': 999},
-                     {'id': 9, 'state': 'PENDING', 'stop': 2, 'target': 998}]
+                     {'id': 9, 'state': 'PENDING', 'entry': 106, 'stop': 96, 'target': 121}]
         for logarithmic in (False, True):
             with self.subTest(logarithmic=logarithmic):
                 base = candle_figure(candles, analyses, '1h', signals=[], paper_positions=positions,
@@ -84,13 +84,36 @@ class SignalTests(unittest.TestCase):
                 self.assertIn('PAPER #7 Stop loss', labels)
                 self.assertEqual(labels['PAPER #7 Stop loss'].yref, 'y')
                 self.assertAlmostEqual(labels['PAPER #7 Stop loss'].y, 1.9777236052888477 if logarithmic else 95)
-                self.assertFalse(any('#8' in name or '#9' in name for name in names))
+                self.assertFalse(any('#8' in name for name in names))
+                self.assertIn('PENDING PAPER #9 Take profit 121.00', names)
+                pan = candle_figure(candles, analyses, '1h', signals=[], paper_positions=positions,
+                                    logarithmic=logarithmic, price_offset=.3)
+                self.assertGreater(pan.layout.yaxis.range[0], base.layout.yaxis.range[0])
+                self.assertAlmostEqual(pan.layout.yaxis.range[1] - pan.layout.yaxis.range[0],
+                                       base.layout.yaxis.range[1] - base.layout.yaxis.range[0])
+                self.assertEqual(pan.layout.xaxis.range, base.layout.xaxis.range)
+                self.assertEqual(pan.layout.yaxis3.range, base.layout.yaxis3.range)
                 self.assertEqual(base.layout.xaxis.range, zoom.layout.xaxis.range)
                 self.assertEqual(base.layout.yaxis3.range, zoom.layout.yaxis3.range)
                 self.assertAlmostEqual(base.layout.yaxis.range[1] - base.layout.yaxis.range[0],
                                        2 * (zoom.layout.yaxis.range[1] - zoom.layout.yaxis.range[0]))
         with self.assertRaisesRegex(ValueError, 'Price zoom'):
             candle_figure(candles, analyses, '1h', price_zoom=0)
+
+    def test_previous_setup_levels_are_explicitly_historical(self):
+        candles = make_candles([100.0] * 90)
+        for index, candle in enumerate(candles):
+            candle['time'] = index * 3600000
+        analyses = chart_analysis(candles, '1h', True)
+        records = [{'Signal': 'BUY', 'Candle time': '2026-10-08T00:00:00+00:00',
+                    'Available at': '2026-10-08T01:00:00+00:00', 'Marker price': 99,
+                    'Reference entry': 100, 'Stop': 95, 'Target': 110, 'RSI': 60,
+                    'Reason': 'Historical fixture'}]
+        figure = candle_figure(candles, analyses, '1h', signals=records)
+        names = [shape.name for shape in figure.layout.shapes if shape.name]
+        self.assertIn('Previous setup Take profit 110.00', names)
+        self.assertIn('Previous setup Stop loss 95.00', names)
+        self.assertFalse(any(name.startswith('Research') for name in names))
 
     def test_extended_indicators_exclude_forming_candle(self):
         candles = make_candles([100 + index * .1 for index in range(240)])

@@ -171,6 +171,23 @@ st.markdown(
         [data-testid="stPlotlyChart"] { overflow: hidden; }
     }
     :root { --ink: #202631; --muted: #76808f; --paper: #f7f8fa; --line: #e5e8ee; --lime: #2864ef; }
+    html, body, .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"] {max-width:100%;overflow-x:clip;overscroll-behavior-x:none;}
+    .block-container, [data-testid="stColumn"], [data-testid="stVerticalBlock"] {min-width:0;}
+    .desk-brand > div:last-child {min-width:0;}
+    .desk-title, .desk-subtitle {overflow-wrap:anywhere;}
+    .brand-mark {font-size:20px;font-weight:700;line-height:1;user-select:none;}
+    .block-container:has(.st-key-login_form) {max-width:520px;padding:1.5rem 1rem;min-height:100svh;}
+    .block-container:has(.st-key-login_form) .desk-header {margin:0;padding:.75rem 0;}
+    .block-container:has(.st-key-login_form) .research-status {display:none;}
+    .st-key-login_form {width:100%;max-width:440px;margin:1.5rem auto 0;box-sizing:border-box;border:1px solid var(--line);padding:1.25rem;}
+    .st-key-login_form input {font-size:16px;min-height:48px;}
+    .st-key-login_form button {min-height:48px;}
+    .st-key-login_form [data-testid="stCheckbox"] p {font-size:.8125rem;overflow-wrap:anywhere;}
+    @media (max-width:640px) {
+        .stApp input, .stApp textarea, [data-baseweb="select"] input {font-size:16px !important;}
+        .block-container:has(.st-key-login_form) {padding:calc(.75rem + env(safe-area-inset-top)) 1rem calc(1rem + env(safe-area-inset-bottom));}
+        .st-key-login_form {padding:1rem;margin-top:1rem;}
+    }
     header[data-testid="stHeader"], [data-testid="stToolbar"], #MainMenu, footer { display: none !important; }
     .stApp { background: #f7f8fa; }
     .block-container { max-width: 1600px; padding-top: .75rem; }
@@ -195,7 +212,7 @@ st.markdown(
         .market-ohlc { gap: 1rem; }
     }
     </style>
-    <div class="desk-header"><div class="desk-brand"><div class="brand-mark" aria-hidden="true"><span class="app-icon">candlestick_chart</span></div><div><div class="desk-title">MaxTrade</div>
+    <div class="desk-header"><div class="desk-brand"><div class="brand-mark" aria-hidden="true">M</div><div><div class="desk-title">MaxTrade</div>
     <div class="desk-subtitle">CoinDCX / Deribit</div></div></div><span class="research-status">Research only</span></div>
     """,
     unsafe_allow_html=True,
@@ -210,7 +227,7 @@ def select_page(page: str) -> None:
     st.session_state["navigation"] = page
 
 with st.sidebar:
-    st.markdown('<div class="desk-header"><div class="desk-brand"><div class="brand-mark" aria-hidden="true"><span class="app-icon">candlestick_chart</span></div><div><div class="desk-title">MaxTrade</div><div class="desk-subtitle">Research desk</div></div></div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="desk-header"><div class="desk-brand"><div class="brand-mark" aria-hidden="true">M</div><div><div class="desk-title">MaxTrade</div><div class="desk-subtitle">Research desk</div></div></div></div>', unsafe_allow_html=True)
     for page, icon in [("Signals", "radar"), ("Chart", "candlestick_chart"), ("History", "history"), ("Settings", "tune")]:
         st.button(page, icon=f":material/{icon}:", key=f"menu_{page.lower()}",
                   type="primary" if st.session_state.get("navigation", "Signals") == page else "secondary",
