@@ -87,8 +87,9 @@ class ReplayTests(unittest.TestCase):
                                paper_positions=[{'id': 1, 'opened_at': '1970-01-03T03:00:00+00:00',
                                                  'closed_at': None, 'entry': 102, 'state': 'OPEN', 'pnl': None}])
         marker = next(trace for trace in figure.data if trace.name == 'BUY setup')
-        self.assertEqual(marker.mode, 'markers')
-        self.assertIsNone(marker.text)
+        self.assertEqual(marker.mode, 'markers+text')
+        self.assertEqual(list(marker.text), ['BUY'])
+        self.assertEqual(marker.textposition, 'bottom center')
         self.assertEqual(figure.layout.hovermode, 'closest')
         self.assertNotIn('%{customdata[5]}', marker.hovertemplate)
         self.assertEqual(len(figure.layout.annotations), 5)
