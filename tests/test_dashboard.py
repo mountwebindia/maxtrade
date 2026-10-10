@@ -466,6 +466,37 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(app.dataframe[0].value['Paper gate'].tolist(), ['BLOCKED', 'BLOCKED'])
             self.assertTrue(any('Setup invalidation:' in item.value for item in app.caption))
 
+    def test_trade_blockers_show_actual_feed_and_ai_reasons(self):
+        def render():
+            from types import SimpleNamespace
+            from maxtrade.chart_page import render_trade_status
+            latest = SimpleNamespace(action='NO TRADE', reason='Trend not aligned')
+            render_trade_status('Spot', 'B-BTC_USDT', latest, False)
+
+        report = {'product': 'Spot', 'symbol': 'B-BTC_USDT', 'paper_policy': 'autonomous-paper-v1',
+                  'created_at': '2026-10-10T10:00:00+00:00', 'expires_at': '2026-10-10T10:02:00+00:00',
+                  'evidence': [], 'blockers': ['Technical evidence is not unanimously LONG'],
+                  'derivatives_error': 'Feed request timed out',
+                  'ai_review': {'verdict': 'UNCERTAIN', 'summary': 'Technical alignment absent',
+                                'concerns': ['4h trend is not bullish']}}
+        with patch('maxtrade.paper.PaperLedger') as ledger, patch('maxtrade.history.ScanHistory') as history, \
+                patch('maxtrade.paper.coordinate', return_value={'decision': 'NO TRADE',
+                      'blockers': ['Technical evidence is not unanimously LONG']}):
+            ledger.return_value.account.return_value = {'kill_switch': False, 'occupied': False}
+            ledger.return_value.automation_enabled.return_value = True
+            ledger.return_value.ai_mode.return_value = 'Azure-assisted'
+            ledger.return_value.positions.return_value = []
+            history.return_value.recent_research.return_value = [{'report': report}]
+            history.return_value.worker_status.return_value = None
+            app = AppTest.from_function(render).run()
+            self.assertFalse(app.exception)
+            text = '\n'.join(item.value for item in app.text)
+            self.assertIn('Derivatives unavailable: Feed request timed out', text)
+            self.assertIn('AI verdict: UNCERTAIN', text)
+            self.assertIn('AI concern: 4h trend is not bullish', text)
+            self.assertNotIn('Risk review does not approve a BUY entry', text)
+            self.assertTrue(any(item.value == 'Paper: WAIT / NO TRADE' for item in app.markdown))
+
     def test_trade_decision_separates_saved_positions_and_does_not_mutate(self):
         def render():
             from types import SimpleNamespace

@@ -442,7 +442,7 @@ def render_trade_status(product: str, pair: str, latest, stale: bool) -> None:
                 blockers.append("Chart candles are stale")
             if not enabled:
                 blockers.append("Paper automation paused")
-            if risk.get('decision') != 'BUY':
+            if risk.get('decision') != 'BUY' and not blockers:
                 blockers.append('Risk review does not approve a BUY entry')
             blockers = list(dict.fromkeys(blockers))
             st.write(f"Paper: {'BUY ELIGIBLE · not filled' if not blockers else 'WAIT / NO TRADE'}")
@@ -458,6 +458,7 @@ def render_trade_status(product: str, pair: str, latest, stale: bool) -> None:
                 checklist.append({'Timeframe': timeframe, 'Direction': item['action'] if item else 'MISSING',
                                   'Paper gate': 'PASS' if fresh and item['action'] == 'LONG' else 'BLOCKED',
                                   'Freshness': 'FRESH' if fresh else 'STALE / MISSING',
+                                  'Reason': item.get('reason', 'Not supplied') if item else 'Timeframe evidence unavailable',
                                   'Candle closed': item['event_time'] if item else None,
                                   'Expires': item['expires_at'] if item else None})
             with st.expander('1h / 4h evidence checks'):
@@ -466,6 +467,32 @@ def render_trade_status(product: str, pair: str, latest, stale: bool) -> None:
                 st.markdown('**Blocking conditions**')
             for blocker in blockers:
                 st.text(blocker)
+            if blockers:
+                with st.expander('Blocker evidence'):
+                    derivatives = report.get('derivatives')
+                    if isinstance(derivatives, dict):
+                        try:
+                            fresh = datetime.fromisoformat(derivatives['retrieved_at']) <= now < datetime.fromisoformat(derivatives['expires_at'])
+                            freshness = 'FRESH' if fresh else 'STALE / FUTURE'
+                        except (KeyError, TypeError, ValueError):
+                            freshness = 'INVALID TIMESTAMPS'
+                        st.caption(f"Derivatives: {freshness} | "
+                                   f"Retrieved {derivatives.get('retrieved_at', 'N/A')} | Expires {derivatives.get('expires_at', 'N/A')}")
+                        st.text(f"Instrument: {derivatives.get('instrument', 'Not supplied')} | "
+                                f"Liquidity gate: {'PASS' if derivatives.get('liquid') is True else 'BLOCKED'}")
+                    else:
+                        st.text('Derivatives unavailable: ' + str(report.get('derivatives_error') or 'No evidence saved'))
+                    if evidence['ai_mode'] == 'Azure-assisted':
+                        review = report.get('ai_review')
+                        if isinstance(review, dict):
+                            st.text('AI verdict: ' + str(review.get('verdict', 'Not supplied')))
+                            st.text(str(review.get('summary') or 'No review summary saved'))
+                            if review.get('shadow_only'):
+                                st.text('AI review is shadow-only; it cannot clear PAPER entry')
+                            for concern in review.get('concerns') or []:
+                                st.text('AI concern: ' + str(concern))
+                        else:
+                            st.text('AI review unavailable: ' + str(report.get('ai_error') or 'No structured review saved'))
         else:
             st.write("Paper: WAIT / NO TRADE | No matching full research assessment.")
             st.markdown('**Blocking conditions**')
