@@ -331,9 +331,35 @@ class ResearchTests(unittest.TestCase):
             self.assertNotIn('private_key', captured)
             performance = next(agent for agent in captured['agents'] if agent['agent'] == 'performance-analyst')
             self.assertEqual(performance['status'], 'AVAILABLE')
+            reviewer = next(agent for agent in captured['agents'] if agent['agent'] == 'ai-reviewer')
+            self.assertEqual(reviewer['status'], 'PENDING')
+            self.assertEqual(reviewer['blockers'], [])
+            self.assertFalse(reviewer['execution_enabled'])
             self.assertEqual(ledger.positions(), [])
             saved = ScanHistory(path).recent_research()[0]['report']
             self.assertIn('Azure review veto, uncertainty or unavailable', saved['blockers'])
+            reviewer = next(agent for agent in saved['agents'] if agent['agent'] == 'ai-reviewer')
+            self.assertEqual(reviewer['status'], 'AVAILABLE')
+
+    def test_pending_review_does_not_hide_missing_or_failed_evidence(self):
+        from maxtrade.research import manager_reports
+
+        report = dict(self.paper_report(), ai_mode='Azure-assisted')
+        for changes, pending, status, blockers in (
+                ({}, False, 'UNAVAILABLE', ['Evidence unavailable']),
+                ({}, True, 'PENDING', []),
+                ({'ai_error': 'Azure OpenAI is not configured'}, True, 'UNAVAILABLE', ['Azure OpenAI is not configured']),
+                ({'ai_review': {'verdict': 'VETO', 'concerns': ['event risk']}}, True, 'AVAILABLE', [])):
+            with self.subTest(changes=changes, pending=pending):
+                agents = manager_reports(dict(report, **changes), review_pending=pending)
+                reviewer = next(agent for agent in agents if agent['agent'] == 'ai-reviewer')
+                self.assertEqual(reviewer['status'], status)
+                self.assertEqual(reviewer['blockers'], blockers)
+                self.assertFalse(reviewer['execution_enabled'])
+        account = {'capital': 10000, 'equity': 10000, 'daily_pnl': 0,
+                   'occupied': False, 'kill_switch': False}
+        report['agents'] = manager_reports(report, review_pending=True)
+        self.assertFalse(coordinate(report, self.now, account=account, autonomous=True)['approved'])
 
     def test_autonomous_policy_retains_risk_vetoes(self):
         account = {'capital':10000, 'equity':10000, 'daily_pnl':0, 'occupied':False, 'kill_switch':False}

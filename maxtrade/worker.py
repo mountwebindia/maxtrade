@@ -64,6 +64,7 @@ def run_once(path: Path, symbols: list[str], ai_config: AzureOpenAIConfig | None
                     configuration = ai_config or azure_openai_config()
                     if configuration is None:
                         raise ValueError('Azure OpenAI is not configured')
+                    report['agents'] = manager_reports(report, review_pending=True)
                     report['ai_review'] = routed_review(configuration, report)
                 except ValueError as error:
                     report['ai_error'] = str(error)

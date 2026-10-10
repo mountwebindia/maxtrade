@@ -135,7 +135,7 @@ def run_market_research(client: Any, product: str, symbol: str,
             "reason": "Technical evidence only; coordinated research and independent risk approval are incomplete."}
 
 
-def manager_reports(report: dict[str, Any]) -> list[dict[str, Any]]:
+def manager_reports(report: dict[str, Any], *, review_pending: bool = False) -> list[dict[str, Any]]:
     specifications = [
         ('data-quality', report.get('evidence'), report.get('errors')),
         ('technical-regime', report.get('quality'), None),
@@ -151,11 +151,12 @@ def manager_reports(report: dict[str, Any]) -> list[dict[str, Any]]:
                      'historical_shadow', 'ai_review', 'performance_shadow']
     for (name, evidence, error), evidence_key in zip(specifications, evidence_keys):
         unavailable = not evidence or (isinstance(evidence, dict) and evidence.get('status') == 'UNAVAILABLE')
+        pending = name == 'ai-reviewer' and review_pending and not evidence and not error
         source_blockers = evidence.get('blockers', []) if isinstance(evidence, dict) else []
         blockers = [str(error)] if error else ['Evidence unavailable'] if unavailable else list(source_blockers)
-        agents.append({'agent': name, 'status': 'UNAVAILABLE' if unavailable or error else 'AVAILABLE',
+        agents.append({'agent': name, 'status': 'PENDING' if pending else 'UNAVAILABLE' if unavailable or error else 'AVAILABLE',
                        'as_of': report['created_at'], 'expires_at': report.get('expires_at'),
-                       'evidence_key': evidence_key, 'blockers': blockers,
+                       'evidence_key': evidence_key, 'blockers': [] if pending else blockers,
                        'execution_enabled': False})
     concerns = list(report.get('blockers', []))
     concerns.extend(['News feed is not a comprehensive event calendar',
