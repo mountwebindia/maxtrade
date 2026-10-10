@@ -131,6 +131,8 @@ class ResearchTests(unittest.TestCase):
         self.assertIn("coindcx.com", item.source)
         self.assertEqual(item.event_time, "2026-10-06T06:00:00+00:00")
         self.assertEqual(item.expires_at, "2026-10-06T07:00:00+00:00")
+        self.assertTrue(item.completed)
+        self.assertEqual(item.event_time_kind, "candle_close")
 
     def test_missing_evidence_never_authorizes_trade(self):
         client = Mock()
@@ -299,6 +301,39 @@ class ResearchTests(unittest.TestCase):
             ledger.set_automation(False)
             self.assertEqual(ledger.positions()[0]['state'], 'CANCELLED')
             self.assertTrue(ledger.account(self.now)['kill_switch'])
+
+    def test_worker_review_receives_current_paper_context_and_keeps_veto(self):
+        import json
+        from maxtrade.ai_review import encoded_evidence
+        from maxtrade.worker import run_once
+
+        with TemporaryDirectory() as folder:
+            path = Path(folder) / 'review-context.sqlite3'
+            ledger = PaperLedger(path)
+            ledger.set_automation(True)
+            ledger.set_ai_mode('Azure-assisted')
+            captured = {}
+
+            def review(configuration, report):
+                captured.update(json.loads(encoded_evidence(dict(report, private_key='not-for-review'))))
+                return {'verdict': 'UNCERTAIN', 'summary': 'Liquidity coverage incomplete', 'concerns': ['spot depth missing']}
+
+            with patch('maxtrade.worker.CoinDCXClient'), patch('maxtrade.worker.PaperLedger.reconcile'), \
+                    patch('maxtrade.worker.run_coordinated_research', return_value=self.paper_report()), \
+                    patch('maxtrade.worker.update_outcomes', return_value=[]), \
+                    patch('maxtrade.ai_review.routed_review', side_effect=review), \
+                    patch('maxtrade.worker.datetime') as clock:
+                clock.now.return_value = self.now
+                self.assertEqual(run_once(path, ['B-BTC_USDT'], ai_config=Mock()), 0)
+            self.assertEqual(captured['paper_account']['as_of'], self.now.isoformat())
+            self.assertEqual(captured['paper_account']['capital'], ledger.account(self.now)['capital'])
+            self.assertEqual(captured['paper_account']['kill_switch'], ledger.account(self.now)['kill_switch'])
+            self.assertNotIn('private_key', captured)
+            performance = next(agent for agent in captured['agents'] if agent['agent'] == 'performance-analyst')
+            self.assertEqual(performance['status'], 'AVAILABLE')
+            self.assertEqual(ledger.positions(), [])
+            saved = ScanHistory(path).recent_research()[0]['report']
+            self.assertIn('Azure review veto, uncertainty or unavailable', saved['blockers'])
 
     def test_autonomous_policy_retains_risk_vetoes(self):
         account = {'capital':10000, 'equity':10000, 'daily_pnl':0, 'occupied':False, 'kill_switch':False}

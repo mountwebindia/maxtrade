@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from html import escape
 from math import isfinite, log10
+from textwrap import wrap
 from typing import Any
 
 import plotly.graph_objects as go
@@ -115,9 +116,10 @@ def candle_figure(candles: list[dict[str, Any]], analyses: list[TradeSignal],
                                        textfont={'color': color, 'size': 11}, cliponaxis=False,
                                        marker={'symbol': symbol, 'size': 12, 'color': color},
                                        customdata=[[str(record['Available at']), record['Reference entry'], record['Stop'],
-                                                    record['Target'], record['RSI'], escape(record['Reason'])] for record in selected],
+                                                    record['Target'], record['RSI'], '<br>'.join(escape(line) for line in wrap(record['Reason'], width=38))] for record in selected],
                                        hovertemplate=label + ' setup (not a fill)<br>%{customdata[0]}'
                                        '<br>Entry %{customdata[1]}<br>SL %{customdata[2]}<br>TP %{customdata[3]}'
+                                       '<br>Reason: %{customdata[5]}'
                                        '<extra></extra>'), row=1, col=1)
     for field, price_field, label in [('opened_at', 'entry', 'Paper entry'), ('closed_at', 'exit', 'Paper exit')]:
         selected = [position for position in paper_positions or [] if position.get(field) and position.get(price_field)

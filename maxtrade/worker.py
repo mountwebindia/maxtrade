@@ -52,6 +52,12 @@ def run_once(path: Path, symbols: list[str], ai_config: AzureOpenAIConfig | None
             report['ai_mode'] = ledger.ai_mode()
             from maxtrade.research import manager_reports
             report['performance_shadow'] = dict(ledger.performance(), mode='SHADOW ONLY')
+            account_time = datetime.now(timezone.utc)
+            account = ledger.account(account_time)
+            report['paper_account'] = dict(account, as_of=account_time.isoformat(), mode='PAPER ONLY')
+            preflight = coordinate(report, account_time, account=account, autonomous=ledger.automation_enabled())
+            report.update(decision=preflight['decision'], blockers=preflight['blockers'], risk=preflight)
+            report['agents'] = manager_reports(report)
             if report['ai_mode'] == 'Azure-assisted':
                 from maxtrade.ai_review import routed_review
                 try:
@@ -62,9 +68,9 @@ def run_once(path: Path, symbols: list[str], ai_config: AzureOpenAIConfig | None
                 except ValueError as error:
                     report['ai_error'] = str(error)
                     errors += 1
-            report['agents'] = manager_reports(report)
             if ledger.automation_enabled():
-                decision = coordinate(report, datetime.now(timezone.utc), account=ledger.account(now), autonomous=True)
+                decision_time = datetime.now(timezone.utc)
+                decision = coordinate(report, decision_time, account=ledger.account(decision_time), autonomous=True)
                 report.update(decision=decision['decision'], blockers=decision['blockers'], risk=decision,
                               paper_policy='autonomous-paper-v1', reason='Automated paper-only policy; no human review; no real orders.')
                 if entry_blocker:
@@ -80,6 +86,7 @@ def run_once(path: Path, symbols: list[str], ai_config: AzureOpenAIConfig | None
                     except sqlite3.IntegrityError:
                         report['decision'] = 'NO TRADE'
                         report['blockers'].append('Paper decision already recorded')
+            report['agents'] = manager_reports(report)
             history.save_research(report)
             if report['technical_bias'] in {'LONG', 'SHORT'} and not report['errors']:
                 hourly = next(item for item in report['evidence'] if item['interval'] == '1h')

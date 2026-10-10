@@ -42,7 +42,7 @@ def token_usage(document: dict[str, Any]) -> dict[str, int]:
 def encoded_evidence(report: dict[str, Any]) -> str:
     encoded = json.dumps({name: report.get(name) for name in (
         'product', 'symbol', 'evidence', 'errors', 'sentiment', 'news', 'derivatives',
-        'historical_shadow', 'quality', 'agents', 'performance_shadow')}, allow_nan=False)
+        'historical_shadow', 'quality', 'agents', 'performance_shadow', 'paper_account')}, allow_nan=False)
     if len(encoded) > 60000:
         raise ValueError('Evidence exceeds review size limit')
     return encoded

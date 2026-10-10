@@ -55,6 +55,8 @@ class MarketEvidence:
     action: str
     values: dict[str, float | None]
     reason: str
+    completed: bool = True
+    event_time_kind: str = "candle_close"
 
 
 def market_evidence(candles: list[dict[str, Any]], product: str, symbol: str,
