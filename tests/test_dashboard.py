@@ -167,7 +167,7 @@ class DashboardTests(unittest.TestCase):
         app = AppTest.from_function(render).run(timeout=15)
         self.assertFalse(app.exception)
         self.assertFalse(app.error)
-        self.assertFalse(any(item.value == 'Trade decision' for item in app.subheader))
+        self.assertTrue(any(item.value == 'Trade decision' for item in app.subheader))
         app.button(key='chart_zoom_in').click().run(timeout=15)
         self.assertFalse(app.exception)
         self.assertEqual(app.session_state['chart_price_zoom'], 1.25)
@@ -458,13 +458,63 @@ class DashboardTests(unittest.TestCase):
             history.return_value.worker_status.return_value = None
             app = AppTest.from_function(render).run()
             self.assertFalse(app.exception)
-            self.assertTrue(any('Technical: LONG SETUP' in item.value for item in app.info))
-            self.assertTrue(any(item.value == 'Paper: NO TRADE' for item in app.markdown))
-            self.assertTrue(any('Worker private configuration unavailable' in item.value for item in app.markdown))
+            self.assertTrue(any('Technical: BUY SETUP' in item.value for item in app.info))
+            self.assertTrue(any(item.value == 'Paper: WAIT / NO TRADE' for item in app.markdown))
+            self.assertTrue(any('Worker private configuration unavailable' in item.value for item in app.text))
             self.assertEqual([metric.label for metric in app.metric], ['Research entry', 'Stop', 'Target'])
             self.assertEqual(app.dataframe[0].value['Timeframe'].tolist(), ['1h', '4h'])
             self.assertEqual(app.dataframe[0].value['Paper gate'].tolist(), ['BLOCKED', 'BLOCKED'])
             self.assertTrue(any('Setup invalidation:' in item.value for item in app.caption))
+
+    def test_trade_decision_separates_saved_positions_and_does_not_mutate(self):
+        def render():
+            from types import SimpleNamespace
+            from unittest.mock import patch
+            from maxtrade.chart_page import render_trade_status
+            latest = SimpleNamespace(action='SHORT', reason='Bearish trend', entry=200, stop=210, target=180)
+            positions = [dict(id=7, symbol='B-BTC_USDT', state='OPEN', entry=100, stop=95, target=110),
+                         dict(id=8, symbol='B-BTC_USDT', state='PENDING', entry=None, stop=90, target=120),
+                         dict(id=9, symbol='B-ETH_USDT', state='OPEN', entry=50, stop=45, target=60),
+                         dict(id=10, symbol='B-BTC_USDT', state='CLOSED', entry=80, stop=75, target=90)]
+            with patch('maxtrade.paper.PaperLedger') as ledger, patch('maxtrade.history.ScanHistory') as history:
+                ledger.return_value.account.return_value = {'kill_switch': True, 'occupied': True}
+                ledger.return_value.automation_enabled.return_value = False
+                ledger.return_value.positions.return_value = positions
+                history.return_value.recent_research.return_value = []
+                history.return_value.worker_status.return_value = None
+                render_trade_status('Spot', 'B-BTC_USDT', latest, False)
+                assert all(call[0] in {'account', 'automation_enabled', 'positions'}
+                           for call in ledger.return_value.method_calls)
+        app = AppTest.from_function(render).run()
+        self.assertFalse(app.exception)
+        self.assertIn('SELL SETUP', app.info[0].value)
+        self.assertEqual([metric.value for metric in app.metric],
+                         ['200.00', '210.00', '180.00', '100.00', '95.00', '110.00', 'N/A', '90.00', '120.00'])
+        text = '\n'.join(item.value for item in app.markdown)
+        self.assertIn('PAPER #7 · OPEN · BUY filled', text)
+        self.assertIn('PAPER #8 · PENDING · Queued · not filled', text)
+        self.assertNotIn('PAPER #9', text)
+        self.assertNotIn('PAPER #10', text)
+        self.assertIn('PAPER kill switch ON', [item.value for item in app.text])
+
+    def test_options_decision_does_not_use_underlying_as_premium_levels(self):
+        def render():
+            from types import SimpleNamespace
+            from unittest.mock import patch
+            from maxtrade.chart_page import render_trade_status
+            with patch('maxtrade.paper.PaperLedger') as ledger, patch('maxtrade.history.ScanHistory') as history:
+                ledger.return_value.account.return_value = {'kill_switch': True, 'occupied': False}
+                ledger.return_value.automation_enabled.return_value = False
+                ledger.return_value.positions.return_value = []
+                history.return_value.recent_research.return_value = []
+                history.return_value.worker_status.return_value = None
+                render_trade_status('Options', 'BTC',
+                                    SimpleNamespace(action='LONG', reason='Uptrend', entry=80000, stop=79000, target=82000), False)
+        app = AppTest.from_function(render).run()
+        self.assertFalse(app.exception)
+        self.assertEqual([metric.value for metric in app.metric], ['N/A', 'N/A', 'N/A'])
+        self.assertTrue(any('Underlying bias is not contract approval' in item.value for item in app.caption))
+
 
     def test_backtest_results_invalidated_by_settings(self):
         from time import time

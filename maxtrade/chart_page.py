@@ -397,7 +397,9 @@ def render_trade_status(product: str, pair: str, latest, stale: bool) -> None:
 
     st.subheader("Trade decision")
     candidate = not stale and latest.action in {"LONG", "SHORT"}
-    status = f"{latest.action} SETUP" if candidate else "WAIT / NO TRADE"
+    direction = {'LONG': 'BUY', 'SHORT': 'SELL'}.get(latest.action, 'WAIT')
+    status = f"{direction} SETUP" if candidate else "WAIT / NO TRADE"
+    st.caption('Research setup · USD underlying' if product == 'Options' else 'Research setup · market quote currency')
     if candidate:
         st.info(f"Technical: {status} | {latest.reason}")
     else:
@@ -405,18 +407,22 @@ def render_trade_status(product: str, pair: str, latest, stale: bool) -> None:
     if candidate:
         columns = st.columns(3)
         for column, label, value in zip(columns, ("Research entry", "Stop", "Target"),
-                                        (latest.entry, latest.stop, latest.target)):
-            column.metric(label, display_number(value, 2 if value is not None and abs(value) >= 1 else 8))
-        if latest.action == 'LONG':
-            st.caption('Setup invalidation: next completed candle fails price > EMA20 > EMA50 or RSI 50-70. Paper stop remains the saved position stop.')
+                                        (None, None, None) if product == 'Options' else (latest.entry, latest.stop, latest.target)):
+            column.metric(label, 'N/A' if value is None else display_number(value, 2 if abs(value) >= 1 else 8))
+        if product == 'Options':
+            st.caption('Option premium Entry / SL / TP: N/A. Underlying bias is not contract approval.')
         else:
-            st.caption('Setup invalidation: next completed candle fails price < EMA20 < EMA50 or RSI 30-50. SHORT is research only; paper spot entries are BUY-only.')
-    st.caption("Completed-candle setup only; not permission to enter. Paper fills require fresh 1h/4h agreement and all risk checks.")
+            with st.expander('Setup invalidation'):
+                st.caption('Setup invalidation: next completed candle fails ' +
+                           ('price > EMA20 > EMA50 or RSI 50-70.' if latest.action == 'LONG' else
+                            'price < EMA20 < EMA50 or RSI 30-50.'))
+    st.caption('Research only, not a fill. PAPER spot entries are BUY-only; SELL is bearish research.')
     try:
         ledger = PaperLedger()
         now = datetime.now(timezone.utc)
         account = ledger.account(now)
         enabled = ledger.automation_enabled()
+        st.markdown('##### PAPER entry decision')
         st.caption(f"Paper automation: {'ENABLED' if enabled else 'PAUSED'} | "
                  f"Kill switch: {'ON' if account['kill_switch'] else 'OFF'} | "
                  f"Position slot: {'OCCUPIED' if account['occupied'] else 'FREE'}")
@@ -436,8 +442,10 @@ def render_trade_status(product: str, pair: str, latest, stale: bool) -> None:
                 blockers.append("Chart candles are stale")
             if not enabled:
                 blockers.append("Paper automation paused")
+            if risk.get('decision') != 'BUY':
+                blockers.append('Risk review does not approve a BUY entry')
             blockers = list(dict.fromkeys(blockers))
-            st.write(f"Paper: {'BUY ELIGIBLE' if not blockers else 'NO TRADE'}")
+            st.write(f"Paper: {'BUY ELIGIBLE · not filled' if not blockers else 'WAIT / NO TRADE'}")
             st.caption(f"Full assessment: {report['created_at']} | expires {report['expires_at']}")
             age = (now - datetime.fromisoformat(report['created_at'])).total_seconds()
             st.caption(f'Assessment age: {age / 60:.1f} minutes' if age >= 0 else 'Assessment timestamp is in the future; unverified.')
@@ -452,11 +460,39 @@ def render_trade_status(product: str, pair: str, latest, stale: bool) -> None:
                                   'Freshness': 'FRESH' if fresh else 'STALE / MISSING',
                                   'Candle closed': item['event_time'] if item else None,
                                   'Expires': item['expires_at'] if item else None})
-            st.dataframe(checklist, hide_index=True, width='stretch')
+            with st.expander('1h / 4h evidence checks'):
+                st.dataframe(checklist, hide_index=True, width='stretch')
+            if blockers:
+                st.markdown('**Blocking conditions**')
             for blocker in blockers:
-                st.write(f"- {blocker}")
+                st.text(blocker)
         else:
-            st.write("Paper: NO TRADE | No matching full research assessment. Run market research below.")
+            st.write("Paper: WAIT / NO TRADE | No matching full research assessment.")
+            st.markdown('**Blocking conditions**')
+            st.text('Matching full research assessment unavailable')
+            if stale:
+                st.text('Chart candles stale or refresh failed')
+            if account['kill_switch']:
+                st.text('PAPER kill switch ON')
+            if not enabled:
+                st.text('Paper automation paused')
+            if account['occupied']:
+                st.text('PAPER position slot occupied')
+        st.markdown('##### Actual PAPER position')
+        positions = [position for position in ledger.positions()
+                     if product == 'Spot' and position['symbol'] == pair and position['state'] in {'OPEN', 'PENDING'}]
+        if not positions:
+            st.caption('No active PAPER position for this market.')
+        for position in positions:
+            opened = position['state'] == 'OPEN'
+            st.write(f"PAPER #{position['id']} · {position['state']} · " +
+                     ('BUY filled · simulated' if opened else 'Queued · not filled'))
+            columns = st.columns(3)
+            for column, label, value in zip(columns, ('Filled entry', 'Saved SL', 'Saved TP'),
+                                           (position['entry'] if opened else None, position['stop'], position['target'])):
+                column.metric(label, 'N/A' if value is None else display_number(value, 2 if abs(value) >= 1 else 8))
+            timestamp = position.get('opened_at') if opened else position.get('submitted_at')
+            st.caption(f"{'Opened' if opened else 'Queued'} {timestamp or 'N/A'}")
         heartbeat = history.worker_status()
         if not heartbeat:
             st.warning("Worker has not completed a cycle on this database.")
@@ -619,15 +655,15 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
         export['time'] = pd.to_datetime(export['time'], unit='ms', utc=True)
         st.download_button('Candle CSV', export.to_csv(index=False), file_name='maxtrade_candles.csv',
                            mime='text/csv', icon=':material/download:', key='chart_csv')
+    render_trade_status(product, pair, latest, stale or refresh_failed)
+    st.caption(f"Data: {'STALE' if stale else 'REFRESH FAILED · saved snapshot' if refresh_failed else 'FRESH'} · "
+               f"Last closed candle {close_time.isoformat(timespec='minutes')} · fetched {snapshot['fetched']}")
     if workspace:
         return
     if latest.action not in {'LONG', 'SHORT'} and records and st.session_state.get('chart_signals', True):
         st.caption(f"Previous {records[-1]['Signal']} setup levels · confirmed {records[-1]['Available at']} · historical, not a current entry.")
     elif latest.action not in {'LONG', 'SHORT'} and not any(position['state'] in {'OPEN', 'PENDING'} for position in paper_positions):
         st.caption('No active PAPER position or confirmed setup levels for this market.')
-    with st.expander('Trade decision & PAPER risk', icon=':material/shield:'):
-        render_trade_status(product, pair, latest, stale)
-        st.caption(f"Last closed candle {close_time.isoformat(timespec='minutes')} · fetched {snapshot['fetched']}")
     st.caption('Arrows: completed-candle technical setups, not executed trades. Spot SELL is bearish research, not a short order. Diamonds/crosses: saved paper entry/exit on this database only.')
     with st.expander('Past signal records', expanded=False):
         st.caption('Recomputed from loaded completed candles only; not a contemporaneously saved recommendation. First warm-up setup is excluded. Options labels describe underlying bias, not option premium.')
