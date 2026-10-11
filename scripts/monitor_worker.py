@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import shutil
 import sqlite3
 from threading import Event
 import tomllib
@@ -28,9 +29,24 @@ def worker_health(database: Path, now: datetime) -> str:
         return 'Worker database or heartbeat unavailable'
 
 
+def disk_health(path: Path) -> str:
+    try:
+        usage = shutil.disk_usage(path)
+        if usage.total <= 0:
+            return 'Disk capacity unavailable'
+        if usage.used / usage.total >= 0.90 or usage.free < 2 * 1024 ** 3:
+            return 'Disk capacity low (90% used or less than 2 GiB free)'
+        return 'healthy'
+    except OSError:
+        return 'Disk capacity unavailable'
+
+
 def monitor_once(database: Path, secrets: Path, state: Path, now: datetime,
                  research_state: Path | None = None) -> str:
     status = worker_health(database, now)
+    disk_status = disk_health(database.parent)
+    if disk_status != 'healthy':
+        status = disk_status + '; ' + status
     if research_state is not None:
         try:
             research = json.loads(research_state.read_text())
@@ -52,9 +68,9 @@ def monitor_once(database: Path, secrets: Path, state: Path, now: datetime,
         if configuration is None:
             raise ValueError('Monitor Telegram configuration unavailable')
         message = ('MaxTrade worker monitor | Sirf PAPER simulation\n'
-               + ('Worker sahi chal raha hai.' if status == 'healthy' else 'Worker check mein dikkat mili: ' + status)
+                   + ('Worker aur storage checks healthy hain.' if status == 'healthy' else 'Monitor check mein dikkat mili: ' + status)
                    + '\n' + now.isoformat()
-               + '\nYeh VM-local monitor hai; poore VM ya network ki outage yahan detect nahi hoti.')
+                   + '\nYeh VM-local monitor hai; poore VM ya network ki outage yahan detect nahi hoti.')
         send_message(configuration, message)
         state.parent.mkdir(parents=True, exist_ok=True)
         temporary = state.with_suffix('.tmp')
@@ -65,7 +81,7 @@ def monitor_once(database: Path, secrets: Path, state: Path, now: datetime,
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description='VM-local worker heartbeat alerts; no trading actions')
+    parser = argparse.ArgumentParser(description='VM-local worker heartbeat and data-filesystem disk alerts; no trading actions')
     parser.add_argument('--database', type=Path, required=True)
     parser.add_argument('--secrets-file', type=Path, required=True)
     parser.add_argument('--state', type=Path, required=True)

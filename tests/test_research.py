@@ -335,16 +335,21 @@ class ResearchTests(unittest.TestCase):
             self.assertEqual(reviewer['status'], 'PENDING')
             self.assertEqual(reviewer['blockers'], [])
             self.assertFalse(reviewer['execution_enabled'])
+            challenger = next(agent for agent in captured['agents'] if agent['agent'] == 'challenger')
+            self.assertNotIn('Azure review veto, uncertainty or unavailable', challenger['blockers'])
             self.assertEqual(ledger.positions(), [])
             saved = ScanHistory(path).recent_research()[0]['report']
             self.assertIn('Azure review veto, uncertainty or unavailable', saved['blockers'])
             reviewer = next(agent for agent in saved['agents'] if agent['agent'] == 'ai-reviewer')
             self.assertEqual(reviewer['status'], 'AVAILABLE')
+            challenger = next(agent for agent in saved['agents'] if agent['agent'] == 'challenger')
+            self.assertIn('Azure review veto, uncertainty or unavailable', challenger['blockers'])
 
     def test_pending_review_does_not_hide_missing_or_failed_evidence(self):
         from maxtrade.research import manager_reports
 
         report = dict(self.paper_report(), ai_mode='Azure-assisted')
+        report['blockers'] = ['Azure review veto, uncertainty or unavailable', 'Spot liquidity missing']
         for changes, pending, status, blockers in (
                 ({}, False, 'UNAVAILABLE', ['Evidence unavailable']),
                 ({}, True, 'PENDING', []),
@@ -356,6 +361,13 @@ class ResearchTests(unittest.TestCase):
                 self.assertEqual(reviewer['status'], status)
                 self.assertEqual(reviewer['blockers'], blockers)
                 self.assertFalse(reviewer['execution_enabled'])
+                challenger = next(agent for agent in agents if agent['agent'] == 'challenger')
+                self.assertEqual('Azure review veto, uncertainty or unavailable' in challenger['blockers'],
+                                 status != 'PENDING')
+                self.assertIn('Spot liquidity missing', challenger['blockers'])
+                self.assertIn('News feed is not a comprehensive event calendar', challenger['blockers'])
+                self.assertEqual(report['blockers'],
+                                 ['Azure review veto, uncertainty or unavailable', 'Spot liquidity missing'])
         account = {'capital': 10000, 'equity': 10000, 'daily_pnl': 0,
                    'occupied': False, 'kill_switch': False}
         report['agents'] = manager_reports(report, review_pending=True)

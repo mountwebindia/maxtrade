@@ -6,10 +6,56 @@ from unittest.mock import patch
 
 from maxtrade.worker import worker_configuration, run_once
 from scripts.install_worker import service_definition
-from scripts.monitor_worker import monitor_once, worker_health
+from scripts.monitor_worker import disk_health, monitor_once, worker_health
 
 
 class WorkerServiceTests(unittest.TestCase):
+    def test_disk_health_thresholds_and_unavailable_storage(self):
+        from types import SimpleNamespace
+        gib = 1024 ** 3
+        for total, used, free, expected in (
+                (30 * gib, 26 * gib, 4 * gib, 'healthy'),
+                (30 * gib, 27 * gib, 3 * gib, 'low'),
+                (10 * gib, 8 * gib, 2 * gib, 'healthy'),
+                (10 * gib, 8 * gib + 1, 2 * gib - 1, 'low'),
+                (0, 0, 0, 'unavailable')):
+            with self.subTest(total=total, used=used, free=free), \
+                    patch('scripts.monitor_worker.shutil.disk_usage', return_value=SimpleNamespace(
+                        total=total, used=used, free=free)):
+                self.assertIn(expected, disk_health(Path('/data')))
+        with patch('scripts.monitor_worker.shutil.disk_usage', side_effect=OSError):
+            self.assertIn('unavailable', disk_health(Path('/data')))
+
+    def test_disk_alert_and_recovery_are_deduplicated_and_preserve_worker_failure(self):
+        from datetime import datetime, timezone
+        from maxtrade.history import ScanHistory
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / 'ledger.sqlite3'
+            now = datetime.now(timezone.utc)
+            history = ScanHistory(database)
+            history.save_worker_status(now, 'watch', 0)
+            secrets = root / 'secrets.toml'
+            secrets.write_text('TELEGRAM_BOT_TOKEN = "123:test_token"\nTELEGRAM_CHAT_ID = "123"\n')
+            secrets.chmod(0o600)
+            with patch.dict(os.environ, {}, clear=True), \
+                    patch('scripts.monitor_worker.disk_health', return_value='Disk capacity low') as disk, \
+                    patch('scripts.monitor_worker.send_message') as send:
+                state = root / 'state.json'
+                self.assertIn('Disk capacity low', monitor_once(database, secrets, state, now))
+                monitor_once(database, secrets, state, now)
+                self.assertEqual(send.call_count, 1)
+                disk.assert_called_with(database.parent)
+                history.save_worker_status(now, 'watch', 1)
+                status = monitor_once(database, secrets, state, now)
+                self.assertIn('Disk capacity low', status)
+                self.assertIn('failures', status)
+                disk.return_value = 'healthy'
+                history.save_worker_status(now, 'watch', 0)
+                self.assertEqual(monitor_once(database, secrets, state, now), 'healthy')
+                monitor_once(database, secrets, state, now)
+                self.assertEqual(send.call_count, 3)
+
     def test_shadow_training_is_opt_in_and_failure_isolated(self):
         from datetime import datetime, timezone
         from scripts.research_worker import research_once

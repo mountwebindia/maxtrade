@@ -174,6 +174,19 @@ Successful delivery is acknowledged in private persisted state; failed delivery
 is retried. It cannot detect or report a whole-VM or network outage while that
 same host is unavailable. External outage monitoring remains pending.
 
+The local monitor code also checks the filesystem containing the database every
+minute: 90% or more used, or less than 2 GiB free, is unhealthy. An unreadable
+capacity probe is reported as unavailable. Disk alerts share the existing
+transition deduplication and delivery retry behavior. The read-only `/app/data`
+mount measures the host data filesystem, not the container writable layer.
+The disk-alert update was deployed to the monitor only on 2026-10-11. Live source
+hash, consecutive healthy loop checks and Telegram API delivery acknowledgement
+were verified; dashboard, paper worker and research container IDs were unchanged.
+The previous host script is retained at
+`/opt/maxtrade-worker/monitor_worker.pre-disk-20261011.py` for rollback. Restore it
+to `/opt/maxtrade-worker/monitor_worker.py` and recreate only `monitor` with both
+the base Compose file and the current worker-image override if rollback is needed.
+
 Coolify administration is available at
 https://coolify.20.127.223.248.sslip.io/ with a trusted TLS certificate.
 [deployment/coolify-admin.yaml](deployment/coolify-admin.yaml) routes only that

@@ -159,6 +159,9 @@ def manager_reports(report: dict[str, Any], *, review_pending: bool = False) -> 
                        'evidence_key': evidence_key, 'blockers': [] if pending else blockers,
                        'execution_enabled': False})
     concerns = list(report.get('blockers', []))
+    if any(agent['agent'] == 'ai-reviewer' and agent['status'] == 'PENDING' for agent in agents):
+        concerns = [concern for concern in concerns
+                    if concern != 'Azure review veto, uncertainty or unavailable']
     concerns.extend(['News feed is not a comprehensive event calendar',
                      'Derivatives context does not verify spot order-book depth',
                      'Historical and quality results are shadow evidence, not calibrated probabilities'])
