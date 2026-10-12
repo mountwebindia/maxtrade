@@ -73,6 +73,8 @@ class PaperLedger:
             connection.execute("INSERT OR IGNORE INTO paper_automation VALUES (1,0)")
             connection.execute("CREATE TABLE IF NOT EXISTS paper_ai (id INTEGER PRIMARY KEY CHECK(id=1), mode TEXT NOT NULL)")
             connection.execute("INSERT OR IGNORE INTO paper_ai VALUES (1,'Deterministic')")
+            connection.execute("CREATE TABLE IF NOT EXISTS gemini_shadow_settings (id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL)")
+            connection.execute("INSERT OR IGNORE INTO gemini_shadow_settings VALUES (1,0)")
             connection.execute("""CREATE TABLE IF NOT EXISTS paper_positions (
                 id INTEGER PRIMARY KEY, decision_id TEXT UNIQUE NOT NULL, symbol TEXT NOT NULL,
                 state TEXT NOT NULL, submitted_at TEXT NOT NULL, report_json TEXT NOT NULL,
@@ -109,6 +111,14 @@ class PaperLedger:
             raise ValueError('Unsupported research mode')
         with closing(self._connect()) as connection, connection:
             connection.execute('UPDATE paper_ai SET mode=? WHERE id=1', (mode,))
+
+    def gemini_shadow_enabled(self) -> bool:
+        with closing(self._connect()) as connection:
+            return bool(connection.execute('SELECT enabled FROM gemini_shadow_settings WHERE id=1').fetchone()[0])
+
+    def set_gemini_shadow(self, enabled: bool) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute('UPDATE gemini_shadow_settings SET enabled=? WHERE id=1', (int(enabled),))
 
     def set_automation(self, enabled: bool) -> None:
         with closing(self._connect()) as connection, connection:

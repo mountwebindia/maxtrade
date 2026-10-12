@@ -59,6 +59,29 @@ class AzureOpenAIConfig:
     fallback_paper_enabled: bool = False
 
 
+@dataclass(frozen=True)
+class GeminiShadowConfig:
+    model: str
+    api_key: str = field(repr=False)
+
+
+def gemini_shadow_config(environment: Mapping[str, Any] | None = None,
+                         secrets: Mapping[str, Any] | None = None) -> GeminiShadowConfig | None:
+    environment = os.environ if environment is None else environment
+    secrets = {} if secrets is None else secrets
+    enabled = str(environment.get('MAXTRADE_GEMINI_SHADOW_ENABLED',
+                  secrets.get('MAXTRADE_GEMINI_SHADOW_ENABLED', 'false'))).strip().lower()
+    if enabled not in {'true', 'false', '1', '0'}:
+        raise ValueError('MAXTRADE_GEMINI_SHADOW_ENABLED must be true or false')
+    if enabled in {'false', '0'}:
+        return None
+    model, api_key = [str(environment.get(name) or secrets.get(name) or '').strip()
+                      for name in ('GEMINI_MODEL', 'GEMINI_API_KEY')]
+    if not api_key or not re.fullmatch(r'gemini-[A-Za-z0-9_.-]+', model):
+        raise ValueError('Gemini shadow configuration incomplete; add model and API key privately.')
+    return GeminiShadowConfig(model, api_key)
+
+
 def azure_openai_config(environment: Mapping[str, Any] | None = None,
                         secrets: Mapping[str, Any] | None = None) -> AzureOpenAIConfig | None:
     environment = os.environ if environment is None else environment

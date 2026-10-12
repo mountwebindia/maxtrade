@@ -421,6 +421,20 @@ def render_analysis_records() -> None:
             saved = st.selectbox("Saved research", list(archived_reports),
                                  format_func=lambda report_id: f"#{report_id} · {archived_reports[report_id]['created_at']} · {archived_reports[report_id]['symbol']}")
             if saved is not None:
+                selected_report = archived_reports[saved]
+                shadow = selected_report.get('gemini_shadow')
+                if shadow:
+                    primary = selected_report.get('ai_review', {})
+                    st.markdown('#### AI review comparison')
+                    st.dataframe([
+                        {'Provider': primary.get('provider', 'Primary'),
+                         'Status': 'AVAILABLE' if primary else 'UNAVAILABLE',
+                         'Verdict': primary.get('verdict', ''),
+                         'Summary': primary.get('summary', '')},
+                        {'Provider': 'Gemini (shadow)', 'Status': shadow.get('status'),
+                         'Verdict': shadow.get('verdict', ''),
+                         'Summary': shadow.get('summary', shadow.get('error', ''))},
+                    ], hide_index=True, width='stretch')
                 st.json(archived_reports[saved], expanded=False)
         alerts = history.recent_alerts()
         st.markdown("#### Research alerts")

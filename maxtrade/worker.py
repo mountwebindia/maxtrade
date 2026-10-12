@@ -18,12 +18,13 @@ from maxtrade.history import DEFAULT_PATH, ScanHistory
 from maxtrade.paper import PaperLedger, coordinate
 from maxtrade.notifications import deliver_notifications, save_daily_summary
 from maxtrade.research import run_coordinated_research
-from maxtrade.settings import AzureOpenAIConfig, TelegramConfig, azure_openai_config, telegram_config
+from maxtrade.settings import (AzureOpenAIConfig, TelegramConfig, azure_openai_config,
+                               gemini_shadow_config, telegram_config)
 
 
 def run_once(path: Path, symbols: list[str], ai_config: AzureOpenAIConfig | None = None,
              notification_config: TelegramConfig | None = None, continuous: bool = False,
-             entry_blocker: str | None = None) -> int:
+             entry_blocker: str | None = None, shadow_secrets_file: Path | None = None) -> int:
     if not 1 <= len(symbols) <= 5 or any(symbol not in {"B-BTC_USDT", "B-ETH_USDT"} for symbol in symbols):
         raise ValueError("Worker supports up to five BTC/ETH USDT spot selections")
     history = ScanHistory(path)
@@ -58,6 +59,14 @@ def run_once(path: Path, symbols: list[str], ai_config: AzureOpenAIConfig | None
             preflight = coordinate(report, account_time, account=account, autonomous=ledger.automation_enabled())
             report.update(decision=preflight['decision'], blockers=preflight['blockers'], risk=preflight)
             report['agents'] = manager_reports(report)
+            shadow_evidence = None
+            shadow_error = False
+            if ledger.gemini_shadow_enabled():
+                from maxtrade.ai_review import encoded_evidence
+                try:
+                    shadow_evidence = encoded_evidence(report)
+                except ValueError:
+                    shadow_error = True
             if report['ai_mode'] == 'Azure-assisted':
                 from maxtrade.ai_review import routed_review
                 try:
@@ -65,6 +74,8 @@ def run_once(path: Path, symbols: list[str], ai_config: AzureOpenAIConfig | None
                     if configuration is None:
                         raise ValueError('Azure OpenAI is not configured')
                     report['agents'] = manager_reports(report, review_pending=True)
+                    if shadow_evidence is not None:
+                        shadow_evidence = encoded_evidence(report)
                     report['ai_review'] = routed_review(configuration, report)
                 except ValueError as error:
                     report['ai_error'] = str(error)
@@ -88,6 +99,28 @@ def run_once(path: Path, symbols: list[str], ai_config: AzureOpenAIConfig | None
                         report['decision'] = 'NO TRADE'
                         report['blockers'].append('Paper decision already recorded')
             report['agents'] = manager_reports(report)
+            if ledger.gemini_shadow_enabled():
+                from maxtrade.gemini_ai import review_shadow
+                try:
+                    configuration = gemini_shadow_config(secrets=worker_private_secrets(shadow_secrets_file))
+                    if configuration is None:
+                        report['gemini_shadow'] = {'status': 'DISABLED', 'shadow_only': True,
+                                                  'execution_enabled': False}
+                    elif shadow_error or shadow_evidence is None:
+                        raise ValueError('Shadow evidence unavailable')
+                    else:
+                        shadow = review_shadow(configuration, shadow_evidence)
+                        shadow['evidence_sha256'] = hashlib.sha256(shadow_evidence.encode()).hexdigest()
+                        primary = report.get('ai_review', {})
+                        shadow['comparison'] = {'primary_provider': primary.get('provider'),
+                                                'primary_verdict': primary.get('verdict'),
+                                                'same_verdict': (shadow['verdict'] == primary['verdict']
+                                                                 if primary.get('verdict') else None)}
+                        report['gemini_shadow'] = shadow
+                except Exception:
+                    report['gemini_shadow'] = {'status': 'UNAVAILABLE', 'shadow_only': True,
+                                              'execution_enabled': False,
+                                              'error': 'Gemini shadow failed; verify private configuration, quota and response.'}
             history.save_research(report)
             if report['technical_bias'] in {'LONG', 'SHORT'} and not report['errors']:
                 hourly = next(item for item in report['evidence'] if item['interval'] == '1h')
@@ -147,7 +180,7 @@ def run_once(path: Path, symbols: list[str], ai_config: AzureOpenAIConfig | None
     return errors
 
 
-def worker_configuration(path: Path | None, required: bool) -> tuple[AzureOpenAIConfig | None, TelegramConfig | None]:
+def worker_private_secrets(path: Path | None) -> dict:
     secrets = {}
     if path is not None:
         try:
@@ -157,6 +190,11 @@ def worker_configuration(path: Path | None, required: bool) -> tuple[AzureOpenAI
                 secrets = tomllib.load(source)
         except (OSError, tomllib.TOMLDecodeError):
             raise ValueError("Worker private configuration missing or invalid") from None
+    return secrets
+
+
+def worker_configuration(path: Path | None, required: bool) -> tuple[AzureOpenAIConfig | None, TelegramConfig | None]:
+    secrets = worker_private_secrets(path)
     azure = azure_openai_config(secrets=secrets)
     telegram = telegram_config(secrets=secrets)
     if required and (azure is None or telegram is None):
@@ -182,7 +220,8 @@ def main() -> None:
         raise SystemExit("Another worker already owns this database") from None
     if not arguments.watch:
         azure, telegram = worker_configuration(arguments.secrets_file, arguments.require_integrations)
-        raise SystemExit(1 if run_once(arguments.database, arguments.symbols, azure, telegram) else 0)
+        raise SystemExit(1 if run_once(arguments.database, arguments.symbols, azure, telegram,
+                          shadow_secrets_file=arguments.secrets_file) else 0)
     try:
         while True:
             try:
@@ -196,7 +235,7 @@ def main() -> None:
                 if arguments.require_integrations:
                     PaperLedger(arguments.database).set_ai_mode('Azure-assisted')
                 failures = run_once(arguments.database, arguments.symbols, azure, telegram, continuous=True,
-                                    entry_blocker=entry_blocker)
+                                    entry_blocker=entry_blocker, shadow_secrets_file=arguments.secrets_file)
                 logging.info("Worker cycle completed: failures=%s", failures)
             except ValueError as error:
                 logging.warning("Worker configuration: %s", error)

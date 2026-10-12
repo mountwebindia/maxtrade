@@ -5,6 +5,24 @@ Settings includes saved Azure verdicts, summaries and concerns, separate timeout
 
 Settings now exposes **AI research mode**, an Azure connection test, and **Start/Pause paper automation**. Autonomous paper mode removes human approval for BTC/ETH USDT spot simulations while retaining evidence, position, freshness and loss-limit vetoes. Closed-trade net win rate, daily P&L/CSV, profit factor and realized drawdown are shown separately from scanner target accuracy.
 
+### Optional Gemini Shadow Review
+
+Existing Deterministic/Azure-assisted modes, optional Claude fallback, and historical/training shadow research remain available and unchanged. Gemini is an independent, default-off shadow reviewer, not a replacement AI mode or a trading approver.
+
+Configure the worker environment or its owner-only `--secrets-file` privately:
+
+```toml
+MAXTRADE_GEMINI_SHADOW_ENABLED = "true"
+GEMINI_MODEL = "YOUR-GEMINI-MODEL-ID"
+GEMINI_API_KEY = "YOUR-PRIVATE-API-KEY"
+```
+
+Use an available `gemini-...` model that supports structured JSON output. For the dashboard, configure the same values in its environment or Streamlit secrets. Under Settings > AI research, enable **Gemini shadow review** and save its separate option. Both the private enable flag and saved toggle are required; disabling either stops new Gemini requests. Dashboard and worker must share `MAXTRADE_DATABASE`. Dashboard-only secrets are not automatically available to a separately hosted worker.
+
+The existing worker makes at most one Gemini request per claimed symbol per 15-minute cycle, with a 30-second timeout and no immediate retries. Gemini receives the frozen primary-review evidence, after the paper decision/submission has completed. Its `CLEAR`/`VETO`/`UNCERTAIN` result, model, token usage, latency, evidence hash, and primary-verdict comparison are saved separately as `gemini_shadow`. Missing/invalid configuration, refusal, quota limits, or network failures produce a disabled/unavailable shadow result without changing paper approvals or existing AI modes. History > Records > Research archive displays both reviews. Verdict agreement is not proof of accuracy or profitability; this does not train a model or automatically promote strategies.
+
+This uses the Gemini API, not Gemini CLI login quota. Enabling it sends the supplied research evidence to Google and may incur API charges depending on your account/model. Review Google's data-use terms and configure account-side quota/billing controls before enabling. No credentials, requests, worker service, or automation are activated by adding this code; always-on hosting and monitoring remain separate requirements.
+
 Run `python -m maxtrade.worker --watch` on a managed backend sharing the dashboard's persistent `MAXTRADE_DATABASE` path for unattended 15-minute cycles. Streamlit Cloud alone does not provide this always-on worker or durable shared storage. Azure-assisted mode requires private credentials and incurs Azure charges; an AI review can veto but cannot override deterministic risk checks. Real orders remain disabled. See [deployment setup](DEPLOYMENT.md#autonomous-paper-operation).
 
 

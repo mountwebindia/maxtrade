@@ -12,6 +12,43 @@ from maxtrade.paper import PaperLedger, coordinate
 
 
 class ResearchTests(unittest.TestCase):
+    def test_gemini_shadow_structured_request_and_failures(self):
+        import json
+        from requests import Timeout
+        from maxtrade.gemini_ai import review_shadow
+        from maxtrade.settings import GeminiShadowConfig
+        config = GeminiShadowConfig('gemini-test', 'private-test')
+        document = {'candidates': [{'finishReason': 'STOP', 'content': {'parts': [
+            {'text': json.dumps({'verdict': 'VETO', 'summary': 'Risk', 'concerns': []})}]}}]}
+        with patch('maxtrade.gemini_ai.requests.Session') as session:
+            post = session.return_value.__enter__.return_value.post
+            response = post.return_value
+            response.status_code = 200
+            response.content = b'{}'
+            response.json.return_value = document
+            result = review_shadow(config, '{}')
+            self.assertTrue(result['shadow_only'])
+            self.assertFalse(result['execution_enabled'])
+            self.assertEqual(result['verdict'], 'VETO')
+            self.assertNotIn('private-test', post.call_args.args[0])
+            self.assertNotIn('private-test', str(post.call_args.kwargs['json']))
+            self.assertFalse(post.call_args.kwargs['allow_redirects'])
+            self.assertEqual(post.call_args.kwargs['timeout'], 30)
+            for invalid in ({}, {'candidates': []}, {'promptFeedback': {'blockReason': 'SAFETY'}},
+                            {'candidates': [{'finishReason': 'MAX_TOKENS'}]},
+                            {'candidates': [{'finishReason': 'STOP', 'content': {'parts': [{'text': '{}'}]}}]}):
+                response.json.return_value = invalid
+                with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                    review_shadow(config, '{}')
+            for code in (401, 429, 503):
+                response.status_code = code
+                with self.assertRaises(ValueError):
+                    review_shadow(config, '{}')
+            post.side_effect = Timeout('private-test')
+            with self.assertRaises(ValueError) as failure:
+                review_shadow(config, '{}')
+            self.assertNotIn('private-test', str(failure.exception))
+
     def test_provider_private_config_and_transient_classification(self):
         from requests import Timeout, ConnectionError
         from requests.exceptions import SSLError

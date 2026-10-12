@@ -9,6 +9,31 @@ from maxtrade.settings import azure_openai_config, credential_status
 
 
 class DashboardTests(unittest.TestCase):
+    def test_gemini_shadow_toggle_preserves_existing_ai_options(self):
+        def render():
+            from unittest.mock import patch
+            import streamlit as st
+            from maxtrade.azure_ai import render_azure_settings
+            with patch('maxtrade.paper.PaperLedger') as ledger, \
+                    patch('maxtrade.settings.azure_openai_config', return_value=None), \
+                    patch('maxtrade.settings.claude_config', return_value=None), \
+                    patch('maxtrade.settings.gemini_shadow_config', return_value=object()):
+                ledger.return_value.ai_mode.return_value = 'Azure-assisted'
+                ledger.return_value.gemini_shadow_enabled.return_value = False
+                render_azure_settings()
+                st.session_state['shadow_saves'] = [call.args[0] for call in
+                    ledger.return_value.set_gemini_shadow.call_args_list]
+                st.session_state['mode_saves'] = ledger.return_value.set_ai_mode.call_count
+        app = AppTest.from_function(render).run()
+        self.assertFalse(app.exception)
+        self.assertEqual(app.radio(key='ai_mode').options, ['Deterministic', 'Azure-assisted'])
+        self.assertEqual(app.radio(key='ai_mode').value, 'Azure-assisted')
+        app.toggle(key='gemini_shadow_enabled').set_value(True).run()
+        app.button(key='gemini_shadow_save').click().run()
+        self.assertFalse(app.exception)
+        self.assertEqual(app.session_state['shadow_saves'], [True])
+        self.assertEqual(app.session_state['mode_saves'], 0)
+
     def test_directional_cards_and_options_comments_are_visible(self):
         for action, style in [('LONG', 'long'), ('SHORT', 'short'), ('WATCH CALL', 'long'), ('WATCH PUT', 'short')]:
             row = {'Market': 'BTC', 'Signal': action, 'Reason': 'Verified reason'}

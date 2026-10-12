@@ -110,6 +110,22 @@ def render_azure_settings() -> None:
         st.caption('Endpoint and deployment above are defaults. Add the key privately in Streamlit Cloud Secrets or the backend environment. Responses v1 needs no dated API version. API keys are never displayed. Connection tests use a paid Azure request; research sends public market evidence to Azure.')
     try:
         ledger = PaperLedger()
+        from maxtrade.settings import gemini_shadow_config
+        st.markdown('#### Gemini shadow review')
+        try:
+            gemini = gemini_shadow_config(secrets=secrets)
+            st.info('Gemini shadow configured · connection unverified' if gemini else 'Gemini shadow not configured')
+        except ValueError as error:
+            st.warning(str(error))
+            gemini = None
+        shadow_enabled = st.toggle('Gemini shadow review', value=ledger.gemini_shadow_enabled(),
+                                   key='gemini_shadow_enabled')
+        if st.button('Save Gemini shadow option', icon=':material/save:', key='gemini_shadow_save'):
+            if shadow_enabled and gemini is None:
+                st.warning('Configure Gemini shadow privately before enabling it.')
+            else:
+                ledger.set_gemini_shadow(shadow_enabled)
+                st.success('Gemini shadow option saved.')
         modes = ['Deterministic', 'Azure-assisted']
         mode = st.radio('Research mode', modes, index=modes.index(ledger.ai_mode()), horizontal=True,
                 key='ai_mode', width='stretch')

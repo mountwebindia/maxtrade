@@ -10,6 +10,80 @@ from scripts.monitor_worker import disk_health, monitor_once, worker_health
 
 
 class WorkerServiceTests(unittest.TestCase):
+    def test_gemini_shadow_preserves_existing_modes_and_paper_decisions(self):
+        from copy import deepcopy
+        from maxtrade.history import ScanHistory
+        from maxtrade.paper import PaperLedger
+        from maxtrade.ai_review import encoded_evidence
+        outcomes = [None, {'verdict': 'VETO', 'status': 'AVAILABLE'}, ValueError('private-secret')]
+        for outcome in outcomes:
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / 'paper.sqlite3'
+                ledger = PaperLedger(path)
+                self.assertFalse(ledger.gemini_shadow_enabled())
+                ledger.set_ai_mode('Azure-assisted')
+                ledger.set_automation(True)
+                ledger.set_gemini_shadow(outcome is not None)
+                self.assertEqual(ledger.ai_mode(), 'Azure-assisted')
+                self.assertTrue(ledger.automation_enabled())
+                report = {'symbol': 'B-BTC_USDT', 'technical_bias': 'NO TRADE', 'errors': [],
+                          'evidence': [], 'created_at': '2026-10-07T10:00:00+00:00',
+                          'blockers': [], 'historical_shadow': {'mode': 'SHADOW ONLY'}}
+                captured = []
+                submitted = []
+                def capture_submission(evidence_report, *args, **kwargs):
+                    submitted.append(deepcopy(evidence_report))
+                    return 7
+                def primary_review(config, evidence_report):
+                    captured.append(encoded_evidence(evidence_report))
+                    return {'provider': 'Azure', 'verdict': 'CLEAR'}
+                with patch.dict(os.environ, {'MAXTRADE_GEMINI_SHADOW_ENABLED': 'true',
+                                             'GEMINI_MODEL': 'gemini-test', 'GEMINI_API_KEY': 'private'}, clear=True), \
+                        patch('maxtrade.worker.CoinDCXClient'), \
+                        patch.object(PaperLedger, 'reconcile'), \
+                        patch.object(PaperLedger, 'submit', side_effect=capture_submission) as submit, \
+                        patch('maxtrade.worker.run_coordinated_research', return_value=deepcopy(report)), \
+                        patch('maxtrade.worker.coordinate', side_effect=lambda *args, **kwargs: {
+                            'approved': True, 'decision': 'BUY', 'blockers': []}), \
+                        patch('maxtrade.ai_review.routed_review', side_effect=primary_review), \
+                        patch('maxtrade.gemini_ai.review_shadow',
+                              side_effect=outcome if isinstance(outcome, Exception) else None,
+                              return_value=deepcopy(outcome)) as shadow, \
+                        patch('maxtrade.worker.update_outcomes', return_value=[]), \
+                        patch('maxtrade.worker.save_daily_summary'):
+                    self.assertEqual(run_once(path, ['B-BTC_USDT'], ai_config=object()), 0)
+                    submit.assert_called_once()
+                    self.assertNotIn('gemini_shadow', submitted[0])
+                saved = ScanHistory(path).recent_research()[0]['report']
+                self.assertEqual(saved['decision'], 'BUY')
+                self.assertEqual(saved['ai_review']['provider'], 'Azure')
+                self.assertEqual(saved['historical_shadow'], report['historical_shadow'])
+                if outcome is None:
+                    shadow.assert_not_called()
+                    self.assertNotIn('gemini_shadow', saved)
+                else:
+                    self.assertEqual(shadow.call_args.args[1], captured[0])
+                    self.assertNotIn('private-secret', str(saved))
+                    if isinstance(outcome, Exception):
+                        self.assertEqual(saved['gemini_shadow']['status'], 'UNAVAILABLE')
+                    else:
+                        self.assertFalse(saved['gemini_shadow']['comparison']['same_verdict'])
+
+    def test_gemini_shadow_configuration_is_independent_opt_in_and_redacted(self):
+        from maxtrade.settings import gemini_shadow_config
+        self.assertIsNone(gemini_shadow_config({}, {}))
+        self.assertIsNone(gemini_shadow_config({'GEMINI_API_KEY': 'test-private'}, {}))
+        enabled = {'MAXTRADE_GEMINI_SHADOW_ENABLED': 'true'}
+        with self.assertRaisesRegex(ValueError, 'incomplete'):
+            gemini_shadow_config(enabled, {})
+        config = gemini_shadow_config(enabled, {'GEMINI_MODEL': 'gemini-test',
+                                               'GEMINI_API_KEY': 'test-private'})
+        self.assertEqual(config.model, 'gemini-test')
+        self.assertNotIn('test-private', repr(config))
+        self.assertIsNone(gemini_shadow_config({'MAXTRADE_GEMINI_SHADOW_ENABLED': False},
+                                              dict(enabled, GEMINI_MODEL='gemini-test',
+                                                   GEMINI_API_KEY='test-private')))
+
     def test_disk_health_thresholds_and_unavailable_storage(self):
         from types import SimpleNamespace
         gib = 1024 ** 3
