@@ -11,6 +11,34 @@ from maxtrade.historical_features import causal_features, evaluate, forward_outc
 
 
 class HistoricalTests(unittest.TestCase):
+    def test_prediction_benchmark_known_outcomes_and_boundaries(self):
+        from maxtrade.training import prediction_benchmark
+        records = [{'probability': probability, 'baseline': .5, 'net_return': outcome,
+                    'regime': regime} for probability, outcome, regime in
+                   [(0, -.02, 'DOWNTREND'), (.2, -.01, 'MIXED'),
+                    (.8, .03, 'UPTREND'), (1, .04, 'UPTREND')]]
+        benchmark = prediction_benchmark(records)
+        self.assertAlmostEqual(benchmark['brier'], .02)
+        self.assertAlmostEqual(benchmark['baseline_brier'], .25)
+        self.assertAlmostEqual(benchmark['brier_skill'], .92)
+        self.assertEqual(benchmark['comparison'], 'LOWER BRIER THAN BASELINE')
+        self.assertEqual([entry['samples'] for entry in benchmark['reliability']], [1, 1, 0, 0, 2])
+        self.assertEqual(benchmark['by_regime']['UPTREND']['samples'], 2)
+        self.assertEqual(benchmark['selected_samples'], 2)
+        self.assertAlmostEqual(benchmark['selected_mean_net_return_pct'], 3.5)
+        self.assertAlmostEqual(benchmark['all_mean_net_return_pct'], 1)
+        self.assertFalse(benchmark['execution_enabled'])
+        self.assertIsNone(prediction_benchmark([])['brier'])
+        perfect_baseline = prediction_benchmark([dict(records[0], baseline=0)])
+        self.assertIsNone(perfect_baseline['brier_skill'])
+        poor = prediction_benchmark([dict(records[0], probability=1)])
+        self.assertLess(poor['brier_skill'], 0)
+        self.assertEqual(poor['comparison'], 'NO BRIER IMPROVEMENT')
+        self.assertIsNone(prediction_benchmark([records[0]])['selected_mean_net_return_pct'])
+        for field, value in [('probability', 1.1), ('baseline', -1), ('net_return', float('nan'))]:
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                prediction_benchmark([dict(records[0], **{field: value})])
+
     def test_training_registry_freezes_forecasts_and_scores_only_mature_predictions(self):
         import math
         from unittest.mock import patch
@@ -38,12 +66,18 @@ class HistoricalTests(unittest.TestCase):
                 repeated = train_shadow(database, registry, 'BTC-USD', 0, 1200 * 86400, now)
             self.assertEqual(first['model_id'], repeated['model_id'])
             self.assertEqual(first['prospective_samples'], 0)
+            self.assertEqual(first['out_of_sample_benchmark'], repeated['out_of_sample_benchmark'])
             with patch('maxtrade.training.load_dataset', return_value=(bars,
                        {'dataset_sha256': 'second'})):
                 mature = train_shadow(database, registry, 'BTC-USD', 0, 1207 * 86400,
                                       now + timedelta(days=7))
             self.assertEqual(mature['prospective_samples'], 1)
             self.assertFalse(mature['promotion_allowed'])
+            with patch('maxtrade.training.load_dataset', return_value=(bars[:1200],
+                       {'dataset_sha256': 'first'})):
+                replayed = train_shadow(database, registry, 'BTC-USD', 0, 1200 * 86400, now)
+            self.assertEqual(replayed['prospective_samples'], 0)
+            self.assertIsNone(replayed['prospective_brier'])
             with sqlite3.connect(registry) as connection:
                 self.assertEqual(connection.execute('SELECT count(*) FROM models').fetchone()[0], 2)
                 self.assertEqual(connection.execute('SELECT count(*) FROM forecasts').fetchone()[0], 2)
@@ -62,6 +96,21 @@ class HistoricalTests(unittest.TestCase):
         self.assertEqual(len(report['walk_forward']), 3)
         for window in report['walk_forward']:
             self.assertLess(window['train_last_maturity_ms'], window['test_start_ms'])
+        benchmark = report['out_of_sample_benchmark']
+        count = sum(window['test_samples'] for window in report['walk_forward'])
+        self.assertEqual(benchmark['samples'], count)
+        self.assertAlmostEqual(benchmark['brier'], sum(
+            window['brier'] * window['test_samples'] for window in report['walk_forward']) / count)
+        self.assertAlmostEqual(benchmark['baseline_brier'], sum(
+            window['baseline_brier'] * window['test_samples'] for window in report['walk_forward']) / count)
+        self.assertEqual(sum(bin_report['samples'] for bin_report in benchmark['reliability']), count)
+        self.assertEqual(sum(regime['samples'] for regime in benchmark['by_regime'].values()), count)
+        changed = [dict(bar) for bar in bars]
+        for bar in changed[-200:]:
+            for field in ('open', 'high', 'low', 'close'):
+                bar[field] *= 1.25
+        revised, _ = fit_candidate(changed, datetime.fromtimestamp(1200 * 86400, timezone.utc))
+        self.assertEqual(report['walk_forward'][0], revised['walk_forward'][0])
         self.assertTrue(0 <= report['probability_positive_net_return'] <= 1)
         self.assertEqual(outcomes['maturity'].iloc[199], 206 * 86400000)
         with self.assertRaisesRegex(ValueError, 'completed'):

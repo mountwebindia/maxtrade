@@ -15,9 +15,49 @@ from sklearn.preprocessing import StandardScaler
 from maxtrade.historical_features import causal_features, forward_outcomes, load_dataset
 
 
-VERSION = 'daily-logistic-shadow-v1'
+VERSION = 'daily-logistic-shadow-v2'
 FEATURES = ['return_1', 'return_20', 'rsi14_sma', 'atr14_pct',
             'volatility20', 'volume_ratio20', 'trend20_50', 'trend50_200']
+
+
+def prediction_benchmark(records: list[dict]) -> dict:
+    if not records:
+        return {'samples': 0, 'brier': None, 'baseline_brier': None,
+            'brier_skill': None, 'comparison': 'NO SCORED SAMPLES',
+            'reliability': [], 'by_regime': {},
+                'threshold': 0.5, 'selected_samples': 0, 'selected_mean_net_return_pct': None,
+                'all_mean_net_return_pct': None, 'execution_enabled': False}
+    probabilities = np.array([record['probability'] for record in records], dtype=float)
+    baselines = np.array([record['baseline'] for record in records], dtype=float)
+    returns = np.array([record['net_return'] for record in records], dtype=float)
+    if (not all(np.isfinite(values).all() for values in (probabilities, baselines, returns))
+            or ((probabilities < 0) | (probabilities > 1)).any()
+            or ((baselines < 0) | (baselines > 1)).any()):
+        raise ValueError('Benchmark requires finite outcomes and probabilities between zero and one')
+    labels = returns > 0
+    brier = float(brier_score_loss(labels, probabilities))
+    baseline_brier = float(brier_score_loss(labels, baselines))
+    reliability = []
+    for bin_index in range(5):
+        lower, upper = bin_index / 5, (bin_index + 1) / 5
+        mask = (probabilities >= lower) & ((probabilities < upper) if bin_index < 4 else (probabilities <= upper))
+        reliability.append({'lower': lower, 'upper': upper, 'samples': int(mask.sum()),
+                            'mean_probability': float(probabilities[mask].mean()) if mask.any() else None,
+                            'positive_rate': float(labels[mask].mean()) if mask.any() else None})
+    by_regime = {}
+    for regime in sorted({record['regime'] for record in records}):
+        mask = np.array([record['regime'] == regime for record in records])
+        by_regime[regime] = {'samples': int(mask.sum()),
+                             'brier': float(brier_score_loss(labels[mask], probabilities[mask])),
+                             'baseline_brier': float(brier_score_loss(labels[mask], baselines[mask]))}
+    selected = probabilities >= 0.5
+    return {'samples': len(records), 'brier': brier, 'baseline_brier': baseline_brier,
+            'brier_skill': 1 - brier / baseline_brier if baseline_brier > 0 else None,
+            'comparison': 'LOWER BRIER THAN BASELINE' if brier < baseline_brier else 'NO BRIER IMPROVEMENT',
+            'reliability': reliability, 'by_regime': by_regime, 'threshold': 0.5,
+            'selected_samples': int(selected.sum()),
+            'selected_mean_net_return_pct': float(returns[selected].mean() * 100) if selected.any() else None,
+            'all_mean_net_return_pct': float(returns.mean() * 100), 'execution_enabled': False}
 
 
 def fit_candidate(bars: list[dict], now: datetime) -> tuple[dict, dict]:
@@ -42,6 +82,7 @@ def fit_candidate(bars: list[dict], now: datetime) -> tuple[dict, dict]:
     boundaries = [development + (len(eligible) - development) * offset // 3
                   for offset in range(4)]
     evaluations = []
+    benchmark_records = []
     for beginning, ending in zip(boundaries[:-1], boundaries[1:]):
         test = eligible[beginning:ending]
         cutoff = frame.iloc[test[0]]['available_at_ms']
@@ -53,6 +94,10 @@ def fit_candidate(bars: list[dict], now: datetime) -> tuple[dict, dict]:
         model.fit(matrix[train], labels[train])
         probabilities = model.predict_proba(matrix[test])[:, 1]
         baseline = float(labels[train].mean())
+        benchmark_records.extend({'probability': float(probability), 'baseline': baseline,
+                      'net_return': float(returns.iloc[index]),
+                      'regime': str(frame.iloc[index]['regime'])}
+                     for index, probability in zip(test, probabilities))
         evaluations.append({'train_samples': len(train), 'test_samples': len(test),
                             'train_last_maturity_ms': int(max(maturity.iloc[train])),
                             'test_start_ms': int(cutoff),
@@ -68,11 +113,14 @@ def fit_candidate(bars: list[dict], now: datetime) -> tuple[dict, dict]:
     forecast = float(model.predict_proba(matrix[-1:])[0, 1])
     return {'version': VERSION, 'mode': 'SHADOW ONLY', 'execution_enabled': False,
             'training_samples': len(eligible), 'walk_forward': evaluations,
+            'out_of_sample_benchmark': prediction_benchmark(benchmark_records),
             'probability_positive_net_return': forecast,
             'calibrated_probability': False, 'weights': weights,
             'feature_closed_at_ms': int(frame.iloc[-1]['available_at_ms']),
             'limitations': ['Fixed model and hyperparameters; no automatic strategy promotion',
                             'Retrospective walk-forward is not untouched prospective evidence',
+                            'Reliability bins are diagnostics, not proof of calibrated probabilities',
+                            'Fixed 0.5 threshold is not optimized; mean outcomes are not portfolio returns',
                             'Coinbase USD daily outcomes do not certify CoinDCX hourly trades',
                             'Five-day long outcome, one-day entry delay, 10bps fees and 5bps slippage per side',
                             'No Azure model weight updates or guaranteed improvement']}, {
@@ -131,13 +179,16 @@ def train_shadow(database: Path, registry: Path, product: str, start: int,
                            (product, feature_close, identity, now.isoformat(), feature_close + 86400000,
                             feature_close + 6 * 86400000, report['probability_positive_net_return']))
         scored = connection.execute('SELECT probability,net_return FROM forecasts '
-                                    'WHERE product=? AND net_return IS NOT NULL ORDER BY feature_close',
-                                    (product,)).fetchall()
+                        'WHERE product=? AND net_return IS NOT NULL AND maturity_ms<=? '
+                                    'AND julianday(recorded_at)<=julianday(?) ORDER BY feature_close',
+                        (product, now.timestamp() * 1000, now.isoformat())).fetchall()
         report = {**report, 'weights': 'Stored in immutable model registry',
                   'prospective_samples': len(scored),
                   'prospective_brier': float(brier_score_loss(
                       [net > 0 for probability, net in scored],
                       [probability for probability, net in scored])) if scored else None,
+                  'prospective_limitations': ['Daily forecasts have overlapping five-day outcomes; samples are not independent',
+                                             'Prospective scores do not permit automatic strategy promotion'],
                   'status': 'TRAINED SHADOW', 'promotion_allowed': False}
     registry.chmod(0o600)
     return report

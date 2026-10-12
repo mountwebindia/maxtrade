@@ -156,6 +156,14 @@ Public API references: [CoinDCX documentation](https://docs.coindcx.com/). Spot 
 
 The research signal uses 20/50 EMA ordering and Wilder-smoothed RSI(14) for trend and momentum alignment. Candidate risk levels use the simple mean of the last 14 true ranges (ATR): 1.5 ATR for the stop and 3 ATR for the target. Spot signals do not recommend shorting. These rules are a baseline for testing, not a validated or profitable strategy. Fees, slippage, funding, and portfolio sizing are not modeled.
 
+### Prediction Benchmark
+
+Daily SHADOW training reports include `out_of_sample_benchmark`: pooled walk-forward Brier loss, a training-only positive-rate baseline, Brier skill (positive is better), fixed probability reliability bins, and regime-specific losses. A lower loss is a comparison result, not proof of statistical significance or calibration. The scaler and classifier are fitted only on training samples whose outcomes mature before each test fold. Registry version `daily-logistic-shadow-v2` preserves previous model records.
+
+The fixed `p >= 0.5` subset reports mean five-day net outcomes alongside all scored outcomes, with a one-day entry delay and 10bps fees plus 5bps slippage per side. These are sample outcomes, not portfolio returns or CoinDCX hourly execution results. Thresholds are not tuned on these test folds. Retrospective folds are not an untouched prospective holdout; repeated experimentation on them requires new forward evidence.
+
+Frozen prospective forecasts are scored only after maturity and only as of the requested decision time. Daily five-day forecasts overlap, so their sample counts are not independent observations. Probabilities remain uncalibrated, automatic promotion stays disabled, and PAPER risk gates are unchanged.
+
 ## Crypto options research
 
 Select **Options**, then BTC or ETH, and scan. The source is **Deribit**, not CoinDCX. Public `get_instruments`, `get_book_summary_by_currency`, `ticker`, and `get_tradingview_chart_data` endpoints require no keys. See [Deribit API documentation](https://docs.deribit.com/).
