@@ -132,6 +132,15 @@ def candle_figure(candles: list[dict[str, Any]], analyses: list[TradeSignal],
                              line={"color": color, "width": 1.2,
                                  "shape": "hv" if name.startswith('Pivot') else 'linear'},
                              connectgaps=False), row=1, col=1)
+        if name.startswith('Pivot') and pd.notna(values.iloc[-1]):
+            value = float(values.iloc[-1])
+            precision = 2 if value >= 1 else 8
+            figure.add_annotation(x=.99, xref='paper', xanchor='right',
+                                  y=log10(value) if logarithmic else value, yref='y', yanchor='bottom',
+                                  text=f'{name.removeprefix("Pivot ")} {value:,.{precision}f}',
+                                  hovertext=f'{name}: previous complete UTC day',
+                                  showarrow=False, bgcolor=background, borderpad=2,
+                                  font={'color': color, 'size': 10}, name=name)
     for action, color, symbol in [('BUY', rising, 'triangle-up'), ('SELL', falling, 'triangle-down')]:
         selected = [record for record in signals or [] if record['Signal'] == action]
         if selected:

@@ -32,6 +32,39 @@ def render_touch_zoom() -> None:
             const plot = document.querySelector('.st-key-candle_chart .js-plotly-plot')
                 || document.querySelector('[data-testid="stPlotlyChart"] .js-plotly-plot');
             if (!plot || !plot.layout || !plot._context || !window.Hammer || plot.maxtradePinch) return;
+            const restoreDrawings = () => {
+                const key = 'maxtrade:drawings:v1:' + JSON.stringify(plot.layout.meta?.drawing_scope);
+                if (!plot.layout.meta?.drawing_scope || !window.Plotly || plot.maxtradeRestoring) return;
+                try {
+                    const saved = JSON.parse(window.localStorage.getItem(key) || '[]');
+                    if (!Array.isArray(saved) || saved.length > 200) return;
+                    const generated = (plot.layout.shapes || []).filter(shape => shape.name);
+                    const drawings = saved.filter(shape => shape && !shape.name
+                        && ['line', 'rect', 'path', 'circle'].includes(shape.type));
+                    const shapes = generated.concat(drawings);
+                    if (JSON.stringify(shapes) === JSON.stringify(plot.layout.shapes || [])) return;
+                    plot.maxtradeRestoring = true;
+                    window.Plotly.relayout(plot, {shapes}).finally(() => { plot.maxtradeRestoring = false; });
+                } catch (_) {}
+            };
+            plot.on('plotly_relayout', changes => {
+                if (plot.maxtradeRestoring || !plot.layout.meta?.drawing_scope
+                    || !Object.keys(changes).some(key => key === 'shapes' || key.startsWith('shapes['))) return;
+                try {
+                    const drawings = (plot.layout.shapes || []).filter(shape => !shape.name).slice(0, 200);
+                    window.localStorage.setItem('maxtrade:drawings:v1:'
+                        + JSON.stringify(plot.layout.meta.drawing_scope), JSON.stringify(drawings));
+                } catch (_) {}
+            });
+            plot.on('plotly_afterplot', restoreDrawings);
+            if (!window.Plotly && !document.getElementById('maxtrade-plotly-library')) {
+                const library = document.createElement('script');
+                library.id = 'maxtrade-plotly-library';
+                library.src = 'https://cdn.plot.ly/plotly-3.1.0.min.js';
+                library.onload = restoreDrawings;
+                document.head.appendChild(library);
+            }
+            restoreDrawings();
             const zoomWithWheel = event => {
                 if (event.pointerType === 'touch') return;
                 if (!event.ctrlKey) return;
@@ -666,6 +699,7 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
             st.warning(f'Custom time range unavailable: {error}')
     if workspace:
         figure.update_layout(height=620)
+    figure.update_layout(meta={'drawing_scope': list(selection)})
     st.plotly_chart(figure,
                     width="stretch", config={"displaylogo": False, "scrollZoom": st.session_state.get('chart_wheel_zoom', True),
                                               "displayModeBar": True,
@@ -734,7 +768,7 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
     elif product != 'Options' and interval in ('1h', '4h'):
         render_replay(snapshot, interval, product)
     with st.expander("Research rules"):
-        st.write("Chart indicators and setup markers use completed candles. Technical arrows are separate from saved paper fills. Drawings are temporary browser annotations, not orders or saved trading instructions.")
+        st.write("Chart indicators and setup markers use completed candles. Technical arrows are separate from saved paper fills. Drawings are stored in this browser per market and timeframe, not orders or trading instructions.")
         st.caption("EMA200 needs 200 closed candles. Bollinger Bands use 20 closes and two population standard deviations. Support/resistance are the prior 20-bar low/high, not predictive zones. MACD uses 12/26 EMAs and a 9-period signal. UTC-day VWAP excludes the first loaded day because its opening history may be incomplete; zero volume stays blank. Indicator warm-ups remain blank.")
         if product == "Spot":
             st.caption("Spot is buy-only research. Sell/short setups are available on Futures; no position-aware exit rule exists.")

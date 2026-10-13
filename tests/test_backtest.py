@@ -18,9 +18,21 @@ class ReplayTests(unittest.TestCase):
         self.assertAlmostEqual(levels['Pivot P'][24], 305 / 3)
         self.assertAlmostEqual(levels['Pivot R1'][24], 2 * 305 / 3 - 90)
         self.assertAlmostEqual(levels['Pivot S3'][24], 90 - 2 * (110 - 305 / 3))
+        labels = {annotation.name: annotation for annotation in figure.layout.annotations
+                  if annotation.name.startswith('Pivot')}
+        self.assertEqual(set(labels), set(levels))
+        self.assertEqual(labels['Pivot P'].text, 'P 101.67')
+        for name, annotation in labels.items():
+            self.assertAlmostEqual(annotation.y, levels[name][-1])
+        logarithmic = candle_figure(candles, analyses, '1h', indicators=('Daily pivots',), logarithmic=True)
+        from math import log10
+        self.assertAlmostEqual(next(annotation.y for annotation in logarithmic.layout.annotations
+                                    if annotation.name == 'Pivot P'), log10(305 / 3))
         candles[-1].update(high=1000, close=999)
         changed = candle_figure(candles, analyses[:-1], '1h', indicators=('Daily pivots',))
         self.assertAlmostEqual(next(trace for trace in changed.data if trace.name == 'Pivot P').y[48], 305 / 3)
+        self.assertEqual(labels['Pivot P'].text, next(annotation for annotation in changed.layout.annotations
+                                                     if annotation.name == 'Pivot P').text)
         partial = candles[1:]
         partial_figure = candle_figure(partial, chart_analysis(partial, '1h', False), '1h', indicators=('Daily pivots',))
         self.assertTrue(all(value != value for value in next(trace for trace in partial_figure.data
