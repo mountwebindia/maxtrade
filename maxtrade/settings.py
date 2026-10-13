@@ -1,4 +1,7 @@
 import os
+import json
+import tempfile
+from pathlib import Path
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 import re
@@ -63,6 +66,41 @@ class AzureOpenAIConfig:
 class GeminiShadowConfig:
     model: str
     api_key: str = field(repr=False)
+
+
+def load_gemini_settings(path: Path | None = None) -> dict[str, Any]:
+    path = path or Path(__file__).resolve().parents[1] / 'data/private/gemini.json'
+    if not path.exists():
+        return {}
+    try:
+        if path.is_symlink() or path.stat().st_mode & 0o077:
+            raise ValueError('Gemini private settings require owner-only permissions.')
+        settings = json.loads(path.read_text())
+        if not isinstance(settings, dict) or set(settings) != {
+                'GEMINI_MODEL', 'GEMINI_API_KEY', 'MAXTRADE_GEMINI_SHADOW_ENABLED'}:
+            raise ValueError('Gemini private settings are invalid.')
+        gemini_shadow_config(environment={}, secrets=settings)
+        return settings
+    except (OSError, ValueError, TypeError):
+        raise ValueError('Gemini private settings could not be loaded safely.') from None
+
+
+def save_gemini_settings(model: str, api_key: str, path: Path | None = None) -> None:
+    path = path or Path(__file__).resolve().parents[1] / 'data/private/gemini.json'
+    settings = {'GEMINI_MODEL': model.strip(), 'GEMINI_API_KEY': api_key.strip(),
+                'MAXTRADE_GEMINI_SHADOW_ENABLED': True}
+    gemini_shadow_config(environment={}, secrets=settings)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix='.gemini-')
+    try:
+        with os.fdopen(descriptor, 'w') as output:
+            json.dump(settings, output)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def gemini_shadow_config(environment: Mapping[str, Any] | None = None,

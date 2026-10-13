@@ -101,8 +101,10 @@ def run_once(path: Path, symbols: list[str], ai_config: AzureOpenAIConfig | None
             report['agents'] = manager_reports(report)
             if ledger.gemini_shadow_enabled():
                 from maxtrade.gemini_ai import review_shadow
+                from maxtrade.settings import load_gemini_settings
                 try:
-                    configuration = gemini_shadow_config(secrets=worker_private_secrets(shadow_secrets_file))
+                    configuration = gemini_shadow_config(secrets={
+                        **worker_private_secrets(shadow_secrets_file), **load_gemini_settings()})
                     if configuration is None:
                         report['gemini_shadow'] = {'status': 'DISABLED', 'shadow_only': True,
                                                   'execution_enabled': False}

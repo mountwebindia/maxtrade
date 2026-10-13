@@ -9,6 +9,48 @@ from maxtrade.settings import azure_openai_config, credential_status
 
 
 class DashboardTests(unittest.TestCase):
+    def test_gemini_private_settings_are_atomic_and_owner_only(self):
+        import tempfile
+        from maxtrade.settings import load_gemini_settings, save_gemini_settings
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'private/gemini.json'
+            self.assertEqual(load_gemini_settings(path), {})
+            save_gemini_settings('gemini-2.5-flash', 'test-private-key', path)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            original = path.read_bytes()
+            self.assertEqual(load_gemini_settings(path)['GEMINI_MODEL'], 'gemini-2.5-flash')
+            with self.assertRaises(ValueError):
+                save_gemini_settings('invalid-model', 'replacement-key', path)
+            self.assertEqual(path.read_bytes(), original)
+            path.chmod(0o644)
+            with self.assertRaises(ValueError):
+                load_gemini_settings(path)
+
+    def test_gemini_credentials_save_clears_key_and_preserves_ai_mode(self):
+        def render():
+            import streamlit as st
+            from unittest.mock import patch
+            from maxtrade.azure_ai import render_azure_settings
+            with patch('maxtrade.paper.PaperLedger') as ledger, \
+                    patch('maxtrade.settings.azure_openai_config', return_value=None), \
+                    patch('maxtrade.settings.claude_config', return_value=None), \
+                    patch('maxtrade.settings.load_gemini_settings', return_value={}), \
+                    patch('maxtrade.settings.save_gemini_settings') as save:
+                ledger.return_value.ai_mode.return_value = 'Azure-assisted'
+                ledger.return_value.gemini_shadow_enabled.return_value = False
+                render_azure_settings()
+                if save.called:
+                    st.session_state['credentials_saved'] = save.call_args.args[0]
+                st.session_state['ai_mode_changes'] = ledger.return_value.set_ai_mode.call_count
+        app = AppTest.from_function(render).run()
+        self.assertFalse(app.exception)
+        app.text_input(key='gemini_api_key').set_value('test-private-key')
+        next(button for button in app.button if button.label == 'Save Gemini credentials').click().run()
+        self.assertFalse(app.exception)
+        self.assertEqual(app.text_input(key='gemini_api_key').value, '')
+        self.assertEqual(app.session_state['ai_mode_changes'], 0)
+        self.assertFalse(any('test-private-key' in item.value for item in app.markdown))
+
     def test_gemini_shadow_toggle_preserves_existing_ai_options(self):
         def render():
             from unittest.mock import patch

@@ -110,14 +110,42 @@ def render_azure_settings() -> None:
         st.caption('Endpoint and deployment above are defaults. Add the key privately in Streamlit Cloud Secrets or the backend environment. Responses v1 needs no dated API version. API keys are never displayed. Connection tests use a paid Azure request; research sends public market evidence to Azure.')
     try:
         ledger = PaperLedger()
-        from maxtrade.settings import gemini_shadow_config
+        from maxtrade.settings import gemini_shadow_config, load_gemini_settings, save_gemini_settings
         st.markdown('#### Gemini shadow review')
         try:
-            gemini = gemini_shadow_config(secrets=secrets)
+            private_gemini = load_gemini_settings()
+            gemini = gemini_shadow_config(secrets={**secrets, **private_gemini})
             st.info('Gemini shadow configured · connection unverified' if gemini else 'Gemini shadow not configured')
         except ValueError as error:
             st.warning(str(error))
             gemini = None
+        if st.session_state.pop('gemini_clear_key', False):
+            st.session_state['gemini_api_key'] = ''
+        with st.form('gemini_credentials'):
+            model = st.text_input('Gemini model', value=getattr(gemini, 'model', 'gemini-2.5-flash'),
+                                  key='gemini_model')
+            api_key = st.text_input('Gemini API key', type='password', key='gemini_api_key')
+            save_credentials = st.form_submit_button('Save Gemini credentials', icon=':material/save:')
+        if save_credentials:
+            try:
+                saved_key = api_key or getattr(gemini, 'api_key', '')
+                save_gemini_settings(model, saved_key)
+                st.session_state['gemini_clear_key'] = True
+                st.session_state['gemini_saved'] = True
+                st.rerun()
+            except (OSError, ValueError):
+                st.error('Gemini settings not saved. Check the model, API key and private storage access.')
+        if st.session_state.pop('gemini_saved', False):
+            st.success('Gemini credentials saved. Connection unverified.')
+        if st.button('Test Gemini connection', icon=':material/network_check:',
+                     disabled=gemini is None, key='gemini_test') and gemini is not None:
+            from maxtrade.gemini_ai import review_shadow
+            try:
+                with st.spinner('Checking Gemini model...'):
+                    review_shadow(gemini, encoded_evidence({'product': 'CONNECTION TEST', 'symbol': 'NONE', 'evidence': []}))
+                st.success('Gemini structured connection verified. No trade submitted.')
+            except ValueError:
+                st.error('Gemini connection failed. Check key access, model and quota.')
         shadow_enabled = st.toggle('Gemini shadow review', value=ledger.gemini_shadow_enabled(),
                                    key='gemini_shadow_enabled')
         if st.button('Save Gemini shadow option', icon=':material/save:', key='gemini_shadow_save'):
