@@ -83,6 +83,31 @@ def candle_figure(candles: list[dict[str, Any]], analyses: list[TradeSignal],
             figure.add_trace(go.Scatter(x=indicator_dates, y=[getattr(signal, attribute) for signal in analyses],
                                        name=name, mode="lines", line={"color": color, "width": 1.3}), row=1, col=1)
     overlays = []
+    if "Daily pivots" in indicators:
+        sessions = pd.to_datetime(confirmed["time"], unit="ms", utc=True).dt.floor("D")
+        daily = confirmed.assign(session=sessions).groupby("session").agg(
+            high=("high", "max"), low=("low", "min"), close=("close", "last"),
+            first=("time", "min"), last=("time", "max"), count=("time", "count"))
+        duration = INTERVAL_MS[interval]
+        complete = ((daily["first"] == daily.index.astype("int64") // 1000000)
+                    & (daily["last"] + duration == daily["first"] + 86400000)
+                    & (daily["count"] * duration == 86400000))
+        previous = daily.loc[complete, ["high", "low", "close"]].copy()
+        previous.index = previous.index + pd.Timedelta(days=1)
+        high = sessions.map(previous["high"])
+        low = sessions.map(previous["low"])
+        close = sessions.map(previous["close"])
+        pivot = (high + low + close) / 3
+        spread = high - low
+        for name, values, color in [
+                ("Pivot P", pivot, "#327ba5"),
+                ("Pivot R1", 2 * pivot - low, "#f45164"),
+                ("Pivot R2", pivot + spread, "#f45164"),
+                ("Pivot R3", high + 2 * (pivot - low), "#f45164"),
+                ("Pivot S1", 2 * pivot - high, "#00b890"),
+                ("Pivot S2", pivot - spread, "#00b890"),
+                ("Pivot S3", low - 2 * (high - pivot), "#00b890")]:
+            overlays.append((name, values.where(values > 0), color))
     if "EMA 200" in indicators:
         overlays.append(("EMA 200", closes.ewm(span=200, adjust=False, min_periods=200).mean(), "#e77caa"))
     if "Bollinger Bands" in indicators:
@@ -104,7 +129,9 @@ def candle_figure(candles: list[dict[str, Any]], analyses: list[TradeSignal],
                          ("Resistance (prior 20)", confirmed["high"].shift(1).rolling(20).max(), "#f45164")])
     for name, values, color in overlays:
         figure.add_trace(go.Scatter(x=confirmed_dates, y=values, name=name, mode="lines",
-                                   line={"color": color, "width": 1.2}, connectgaps=False), row=1, col=1)
+                             line={"color": color, "width": 1.2,
+                                 "shape": "hv" if name.startswith('Pivot') else 'linear'},
+                             connectgaps=False), row=1, col=1)
     for action, color, symbol in [('BUY', rising, 'triangle-up'), ('SELL', falling, 'triangle-down')]:
         selected = [record for record in signals or [] if record['Signal'] == action]
         if selected:
@@ -198,6 +225,9 @@ def candle_figure(candles: list[dict[str, Any]], analyses: list[TradeSignal],
     visible_candles = candles[-visible_bars:]
     bounds = [float(bar[field]) for bar in visible_candles for field in ('low', 'high')]
     bounds.extend(value for value, _, _, _ in levels)
+    for name, values, color in overlays:
+        if name.startswith('Pivot'):
+            bounds.extend(float(value) for value in values.iloc[-visible_bars:].dropna())
     if logarithmic:
         bounds = [log10(value) for value in bounds]
     lower, upper = min(bounds), max(bounds)

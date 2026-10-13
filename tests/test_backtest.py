@@ -2,11 +2,62 @@ import unittest
 from unittest.mock import patch
 
 from maxtrade.backtest import ReplaySettings, replay
-from maxtrade.charts import candle_figure, signal_records
+from maxtrade.charts import candle_figure, signal_records, chart_analysis
 from maxtrade.signals import TradeSignal
 
 
 class ReplayTests(unittest.TestCase):
+    def test_daily_pivots_require_complete_previous_utc_day(self):
+        candles = [{'time': index * 3600000, 'open': 100, 'high': 110, 'low': 90,
+                    'close': 105, 'volume': 10} for index in range(73)]
+        analyses = chart_analysis(candles, '1h', False)
+        figure = candle_figure(candles, analyses, '1h', indicators=('Daily pivots',))
+        levels = {trace.name: trace.y for trace in figure.data if trace.name.startswith('Pivot')}
+        self.assertEqual(len(levels), 7)
+        self.assertTrue(all(value != value for value in levels['Pivot P'][:24]))
+        self.assertAlmostEqual(levels['Pivot P'][24], 305 / 3)
+        self.assertAlmostEqual(levels['Pivot R1'][24], 2 * 305 / 3 - 90)
+        self.assertAlmostEqual(levels['Pivot S3'][24], 90 - 2 * (110 - 305 / 3))
+        candles[-1].update(high=1000, close=999)
+        changed = candle_figure(candles, analyses[:-1], '1h', indicators=('Daily pivots',))
+        self.assertAlmostEqual(next(trace for trace in changed.data if trace.name == 'Pivot P').y[48], 305 / 3)
+        partial = candles[1:]
+        partial_figure = candle_figure(partial, chart_analysis(partial, '1h', False), '1h', indicators=('Daily pivots',))
+        self.assertTrue(all(value != value for value in next(trace for trace in partial_figure.data
+                                                            if trace.name == 'Pivot P').y[:47]))
+
+    def test_futures_oi_validation(self):
+        from maxtrade.options import futures_oi_history
+        with patch('maxtrade.options.requests.get') as request, patch('maxtrade.options.time', return_value=7200):
+            request.return_value.json.return_value = [
+                {'symbol': 'BTCUSDT', 'timestamp': 3600000, 'sumOpenInterest': '10', 'sumOpenInterestValue': '1000'}]
+            self.assertEqual(futures_oi_history('BTC')[0]['quantity'], 10)
+            request.return_value.json.return_value[0]['sumOpenInterest'] = '-1'
+            with self.assertRaises(ValueError):
+                futures_oi_history('BTC')
+            with self.assertRaises(ValueError):
+                futures_oi_history('SOL')
+
+    def test_oi_views_and_provider_failure(self):
+        from streamlit.testing.v1 import AppTest
+        chain = [{'Expiry UTC': '2026-11-01T08:00:00+00:00', 'Strike USD': 100,
+                  'CALL OI': 10, 'PUT OI': 20}]
+        history = [{'timestamp': 3600000, 'quantity': 10, 'notional': 1000}]
+        with patch('maxtrade.options.option_chain', return_value=chain), \
+                patch('maxtrade.options.futures_oi_history', return_value=history):
+            app = AppTest.from_string("from maxtrade.options import render_oi_profiles\nrender_oi_profiles('BTC', 'Options')").run()
+            self.assertFalse(app.exception)
+            self.assertEqual(len(app.get('plotly_chart')), 1)
+            app.session_state['chart_oi_view_Options'] = 'Futures over time'
+            app.run()
+            self.assertFalse(app.exception)
+            self.assertEqual(len(app.get('plotly_chart')), 1)
+            self.assertTrue(any('not CoinDCX' in caption.value for caption in app.caption))
+        with patch('maxtrade.options.futures_oi_history', side_effect=ValueError('Unavailable')):
+            app = AppTest.from_string("from maxtrade.options import render_oi_profiles\nrender_oi_profiles('ETH', 'Futures')").run()
+            self.assertFalse(app.exception)
+            self.assertTrue(any('unavailable' in warning.value for warning in app.warning))
+
     def candles(self):
         return [{"time": index * 3600000, "open": 100, "high": 101, "low": 99,
                  "close": 100, "volume": 10} for index in range(60)]

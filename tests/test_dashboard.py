@@ -642,7 +642,8 @@ class DashboardTests(unittest.TestCase):
                     "high": 102 + index * .1, "low": 98 + index * .1,
                     "close": 100 + index * .1} for index in range(80)]
         with patch("maxtrade.chart_page.DeribitClient") as client, \
-                patch("maxtrade.chart_page.scan_options", return_value=[]):
+            patch("maxtrade.chart_page.scan_options", return_value=[]), \
+            patch("maxtrade.options.render_oi_profiles"):
             client.return_value.underlying_candles.return_value = candles
             app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=20)
             app.session_state["navigation"] = "Chart"

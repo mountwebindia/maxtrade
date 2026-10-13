@@ -118,6 +118,102 @@ def option_chain(client: DeribitClient, currency: str, now_ms: int | None = None
     return [rows[key] for key in sorted(rows)]
 
 
+def futures_oi_history(currency: str, period: str = '1h') -> list[dict[str, Any]]:
+    if currency not in {'BTC', 'ETH'} or period not in {'5m', '15m', '1h', '4h', '1d'}:
+        raise ValueError('Unsupported futures OI market or period')
+    response = requests.get('https://fapi.binance.com/futures/data/openInterestHist',
+                            params={'symbol': f'{currency}USDT', 'period': period, 'limit': 100}, timeout=12)
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, list) or not payload or len(payload) > 100:
+        raise ValueError('Futures OI history unavailable')
+    rows = []
+    now_ms = int(time() * 1000)
+    for item in payload:
+        if not isinstance(item, dict) or item.get('symbol') != f'{currency}USDT':
+            raise ValueError('Mismatched futures OI market')
+        timestamp = finite_number(item['timestamp'])
+        quantity = finite_number(item['sumOpenInterest'])
+        notional = finite_number(item['sumOpenInterestValue'])
+        if timestamp <= 0 or timestamp > now_ms + 30000 or quantity < 0 or notional < 0:
+            raise ValueError('Invalid futures OI history')
+        if rows and timestamp <= rows[-1]['timestamp']:
+            raise ValueError('Unordered futures OI history')
+        rows.append({'timestamp': timestamp, 'quantity': quantity, 'notional': notional})
+    if now_ms - rows[-1]['timestamp'] > 2 * INTERVAL_MS[period]:
+        raise ValueError('Stale futures OI history')
+    return rows
+
+
+def render_oi_profiles(currency: str, product: str) -> None:
+    import pandas as pd
+    import plotly.graph_objects as go
+    import streamlit as st
+
+    @st.cache_data(ttl=60, show_spinner=False)
+    def load_chain(market: str):
+        client = DeribitClient()
+        try:
+            return option_chain(client, market), datetime.now(timezone.utc).isoformat()
+        finally:
+            client.session.close()
+
+    @st.cache_data(ttl=60, show_spinner=False)
+    def load_history(market: str, period: str):
+        return futures_oi_history(market, period), datetime.now(timezone.utc).isoformat()
+
+    st.subheader('Open interest')
+    if currency not in {'BTC', 'ETH'}:
+        st.info('OI profiles unavailable for this market. Supported markets: BTC and ETH.')
+        return
+    views = ['Options by strike', 'Futures over time']
+    view = st.segmented_control('OI view', views, default=views[0] if product == 'Options' else views[1],
+                                key=f'chart_oi_view_{product}')
+    if view is None:
+        return
+    try:
+        if view == views[0]:
+            rows, fetched = load_chain(currency)
+            expiries = sorted({row['Expiry UTC'] for row in rows})
+            expiry = st.selectbox('OI expiry (UTC)', expiries, key=f'chart_oi_expiry_{currency}')
+            frame = pd.DataFrame([row for row in rows if row['Expiry UTC'] == expiry])
+            figure = go.Figure()
+            available = False
+            for side, color in [('CALL', '#00b890'), ('PUT', '#f45164')]:
+                values = frame.get(f'{side} OI', pd.Series(index=frame.index, dtype=float))
+                available = available or bool(values.notna().any())
+                figure.add_bar(x=values, y=frame['Strike USD'], orientation='h', name=side,
+                               marker_color=color, hovertemplate=f'{side} OI: %{{x}} {currency}<br>Strike: $%{{y}}<extra></extra>')
+            if not available:
+                st.warning('No current OI quotes for this expiry.')
+                return
+            figure.update_layout(barmode='group', xaxis_title=f'OI ({currency})', yaxis_title='Strike (USD)',
+                                 yaxis_type='category')
+            source = f'Deribit options · OI in {currency} · missing or stale quotes omitted'
+        else:
+            period = st.selectbox('OI period', ['5m', '15m', '1h', '4h', '1d'], index=2, key='chart_oi_period')
+            rows, fetched = load_history(currency, period)
+            frame = pd.DataFrame(rows)
+            unit = st.radio('OI units', ['Base currency', 'Notional USDT'], horizontal=True, key='chart_oi_units')
+            quantity = unit == 'Base currency'
+            figure = go.Figure(go.Scatter(x=pd.to_datetime(frame['timestamp'], unit='ms', utc=True),
+                                         y=frame['quantity' if quantity else 'notional'], mode='lines',
+                                         name='Open interest', connectgaps=False, line_color='#327ba5'))
+            figure.update_layout(xaxis_title='UTC', yaxis_title=f'OI ({currency if quantity else "USDT"})')
+            source = f'Binance {currency}USDT USD-M futures · not CoinDCX OI · latest 100 samples, up to 30 days'
+        figure.update_layout(height=400, margin={'l': 10, 'r': 10, 't': 45, 'b': 45},
+                     legend={'orientation': 'h', 'y': 1.12, 'yanchor': 'bottom'},
+                     uirevision=f'{currency}-{view}')
+        st.plotly_chart(figure, width='stretch', key='chart_oi_plot')
+        st.caption(f'{source} · fetched {fetched} · cache 60 seconds')
+        if st.button('Refresh OI', icon=':material/refresh:', key='chart_oi_refresh'):
+            load_chain.clear()
+            load_history.clear()
+            st.rerun()
+    except (requests.RequestException, KeyError, TypeError, ValueError):
+        st.warning('OI unavailable from the selected provider. Price candles are unaffected.')
+
+
 def render_option_chain(currency: str, key: str) -> None:
     import pandas as pd
     import streamlit as st

@@ -388,7 +388,7 @@ def render_chart_controls(workspace: bool = False) -> tuple[str, str, str, bool]
 
 
 CHART_INDICATORS = ['EMA 20', 'EMA 50', 'EMA 200', 'Bollinger Bands', 'VWAP (UTC day)',
-                    'Support / resistance', 'Volume', 'RSI 14', 'MACD']
+                    'Support / resistance', 'Daily pivots', 'Volume', 'RSI 14', 'MACD']
 
 
 def render_trade_status(product: str, pair: str, latest, stale: bool) -> None:
@@ -682,6 +682,16 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
         export['time'] = pd.to_datetime(export['time'], unit='ms', utc=True)
         st.download_button('Candle CSV', export.to_csv(index=False), file_name='maxtrade_candles.csv',
                            mime='text/csv', icon=':material/download:', key='chart_csv')
+    if 'Daily pivots' in st.session_state.get('chart_indicators', []):
+        pivots = [trace for trace in figure.data if trace.name == 'Pivot P']
+        if not pivots or not any(pd.notna(value) for value in pivots[0].y):
+            st.caption('Daily pivots unavailable: no complete previous UTC day in loaded candles.')
+        else:
+            st.caption('Daily P / R1–R3 / S1–S3 · previous complete UTC day high, low and close')
+    from maxtrade.options import render_oi_profiles
+    if product in {'Options', 'Futures'}:
+        currency = pair if product == 'Options' else pair.removeprefix('B-').split('_')[0]
+        render_oi_profiles(currency, product)
     render_trade_status(product, pair, latest, stale or refresh_failed)
     st.caption(f"Data: {'STALE' if stale else 'REFRESH FAILED · saved snapshot' if refresh_failed else 'FRESH'} · "
                f"Last closed candle {close_time.isoformat(timespec='minutes')} · fetched {snapshot['fetched']}")
