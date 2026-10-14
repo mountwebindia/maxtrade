@@ -471,10 +471,18 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(app.selectbox(key="chart_style").options, ["Candles", "Line", "Area"])
             self.assertIn("MACD", app.multiselect(key="chart_indicators").options)
             self.assertIn("Support / resistance", app.multiselect(key="chart_indicators").options)
+            self.assertIn("Daily pivots", app.multiselect(key="chart_indicators").value)
             self.assertTrue(any(button.key == "chart_csv" for button in app.get("download_button")))
+            import json
+            revision = json.loads(app.get("plotly_chart")[0].proto.spec)['layout']['yaxis']['uirevision']
+            app.run()
+            self.assertEqual(json.loads(app.get("plotly_chart")[0].proto.spec)['layout']['yaxis']['uirevision'], revision)
             app.selectbox(key="chart_style").select("Line").run()
+            revision = json.loads(app.get("plotly_chart")[0].proto.spec)['layout']['yaxis']['uirevision']
             app.multiselect(key="chart_indicators").set_value([]).run()
             self.assertFalse(app.exception)
+            self.assertEqual(app.multiselect(key="chart_indicators").value, [])
+            self.assertNotEqual(json.loads(app.get("plotly_chart")[0].proto.spec)['layout']['yaxis']['uirevision'], revision)
             self.assertTrue(any("Forming candle" in item.proto.body for item in app.get("html")))
             calls = client.return_value.spot_candles.call_count
             next(widget for widget in app.toggle if widget.key == "chart_live").set_value(False).run()

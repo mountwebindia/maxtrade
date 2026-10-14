@@ -32,6 +32,37 @@ def render_touch_zoom() -> None:
             const plot = document.querySelector('.st-key-candle_chart .js-plotly-plot')
                 || document.querySelector('[data-testid="stPlotlyChart"] .js-plotly-plot');
             if (!plot || !plot.layout || !plot._context || !window.Hammer || plot.maxtradePinch) return;
+            window.maxtradeChartRanges ||= new Map();
+            const restoreRanges = () => {
+                if (!window.Plotly || plot.maxtradeRestoringRanges) return;
+                const changes = {};
+                for (const axis of ['xaxis', 'yaxis']) {
+                    const revision = plot.layout[axis]?.uirevision || plot.layout.uirevision;
+                    const range = window.maxtradeChartRanges.get(axis + ':' + revision);
+                    if (range && JSON.stringify(range) !== JSON.stringify(plot.layout[axis]?.range)) {
+                        changes[axis + '.range'] = range;
+                        changes[axis + '.autorange'] = false;
+                    }
+                }
+                if (!Object.keys(changes).length) return;
+                plot.maxtradeRestoringRanges = true;
+                window.Plotly.relayout(plot, changes).finally(() => { plot.maxtradeRestoringRanges = false; });
+            };
+            plot.on('plotly_relayout', changes => {
+                for (const axis of ['xaxis', 'yaxis']) {
+                    const revision = plot.layout[axis]?.uirevision || plot.layout.uirevision;
+                    const key = axis + ':' + revision;
+                    if (changes[axis + '.autorange'] === true) window.maxtradeChartRanges.delete(key);
+                    else if (Object.keys(changes).some(name => name.startsWith(axis + '.range'))) {
+                        const range = changes[axis + '.range'] || [
+                            changes[axis + '.range[0]'] ?? plot.layout[axis].range[0],
+                            changes[axis + '.range[1]'] ?? plot.layout[axis].range[1],
+                        ];
+                        window.maxtradeChartRanges.set(key, [...range]);
+                    }
+                }
+            });
+            plot.on('plotly_afterplot', () => setTimeout(restoreRanges, 0));
             const restoreDrawings = () => {
                 const key = 'maxtrade:drawings:v1:' + JSON.stringify(plot.layout.meta?.drawing_scope);
                 if (!plot.layout.meta?.drawing_scope || !window.Plotly || plot.maxtradeRestoring) return;
@@ -61,10 +92,11 @@ def render_touch_zoom() -> None:
                 const library = document.createElement('script');
                 library.id = 'maxtrade-plotly-library';
                 library.src = 'https://cdn.plot.ly/plotly-3.1.0.min.js';
-                library.onload = restoreDrawings;
+                library.onload = () => { restoreDrawings(); restoreRanges(); };
                 document.head.appendChild(library);
             }
             restoreDrawings();
+            restoreRanges();
             const zoomWithWheel = event => {
                 if (event.pointerType === 'touch') return;
                 if (!event.ctrlKey) return;
@@ -373,7 +405,7 @@ def render_chart_controls(workspace: bool = False) -> tuple[str, str, str, bool]
         toolbar[1].selectbox("Chart theme", ["Light", "Dark"], key="chart_theme")
         toolbar[2].selectbox("Visible candles", [80, 40, 120], key="chart_visible")
         st.multiselect("Indicators", CHART_INDICATORS,
-                       default=["EMA 20", "EMA 50", "Volume", "RSI 14"], key="chart_indicators")
+                       default=["EMA 20", "EMA 50", "Daily pivots", "Volume", "RSI 14"], key="chart_indicators")
         toggles = st.columns(3)
         toggles[0].toggle("Log price scale", key="chart_log")
         toggles[1].toggle('BUY / SELL setups', value=True, key='chart_signals')
@@ -661,7 +693,7 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
     <div class="market-ohlc">{ohlc}</div></div>''')
     style = st.session_state.get("chart_style", "Candles")
     theme = st.session_state.get("chart_theme", "Dark")
-    indicators = tuple(st.session_state.get("chart_indicators", ["EMA 20", "EMA 50", "Volume", "RSI 14"]))
+    indicators = tuple(st.session_state.get("chart_indicators", ["EMA 20", "EMA 50", "Daily pivots", "Volume", "RSI 14"]))
     logarithmic = st.session_state.get("chart_log", False)
     visible = st.session_state.get("chart_visible", 80)
     records = signal_records(candles, chart_analysis(candles, interval, allow_short=True), interval)
@@ -684,7 +716,7 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
     window = st.session_state.get('chart_window', 'Latest candles')
     figure.update_layout(uirevision=repr((selection, style, indicators, logarithmic, visible,
                                           window, st.session_state.get('chart_from'), st.session_state.get('chart_to'))))
-    figure.update_yaxes(uirevision=repr((selection, style, logarithmic, visible,
+    figure.update_yaxes(uirevision=repr((selection, style, indicators, logarithmic, visible,
                                         st.session_state['chart_price_zoom'], st.session_state['chart_price_offset'])), row=1, col=1)
     if window == 'All loaded candles':
         figure.update_xaxes(autorange=True)
