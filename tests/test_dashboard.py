@@ -97,6 +97,27 @@ class DashboardTests(unittest.TestCase):
         self.assertFalse(app.exception)
         self.assertIn('ETHUSDT', app.selectbox(key='chart_market_Spot').options)
 
+    def test_signal_evidence_is_read_only_escaped_and_directional(self):
+        from maxtrade.presentation import signal_evidence
+        row = {'Signal': 'LONG', 'Entry': 100, 'Stop': 95, 'Target': 110,
+               'Signal candle time': 0, 'Reason': '<script>blocked</script>',
+               'Quality': {'blockers': ['<unsafe>']}}
+        evidence = signal_evidence(row)
+        self.assertIn('BUY setup', evidence)
+        self.assertIn('Research only', evidence)
+        self.assertIn('Reward / risk 2.00', evidence)
+        self.assertIn('01 Jan 1970 00:00 UTC', evidence)
+        self.assertIn('&lt;script&gt;', evidence)
+        self.assertNotIn('<script>', evidence)
+        self.assertIn('&lt;unsafe&gt;', evidence)
+        self.assertIn('Does not change the baseline signal', evidence)
+        for changes in ({'Stop': 100}, {'Target': float('nan')}, {'Signal': 'NO TRADE'},
+                        {'Signal': 'SHORT'}, {'Entry': None}):
+            self.assertNotIn('Reward / risk', signal_evidence({**row, **changes}))
+        self.assertIn('SELL setup', signal_evidence({**row, 'Signal': 'SHORT', 'Stop': 105, 'Target': 90}))
+        self.assertIn('WAIT', signal_evidence({'Signal': 'NO TRADE'}))
+        self.assertIn('Closed-candle time unavailable', signal_evidence({'Signal candle time': 'invalid'}))
+
     def test_market_list_search_and_session_stars(self):
         def render():
             from maxtrade.presentation import render_market_list
@@ -104,6 +125,7 @@ class DashboardTests(unittest.TestCase):
                                 {'Market': 'ETHUSDT', 'Price': 50, 'Signal': 'NO TRADE'}], 'watch')
         app = AppTest.from_function(render).run()
         self.assertFalse(app.exception)
+
         app.button(key='watch_favorite_BTCUSDT').click().run()
         self.assertEqual(app.session_state['market_favorites'], ['BTCUSDT'])
         app.toggle(key='watch_starred').set_value(True).run()
@@ -112,6 +134,27 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(len(app.expander), 0)
         app.toggle(key='watch_starred').set_value(False).run()
         self.assertEqual([item.label for item in app.expander], ['ETHUSDT details'])
+        self.assertFalse(app.exception)
+
+    def test_snapshot_age_and_market_priority_are_explicit(self):
+        from datetime import datetime, timezone
+        from maxtrade.presentation import snapshot_status
+        now = datetime(2026, 10, 14, 12, tzinfo=timezone.utc)
+        self.assertIn('5 min old', snapshot_status('2026-10-14T11:55:00Z', now))
+        self.assertIn('Archived snapshot', snapshot_status('2026-10-14T11:55:00Z', now, archived=True))
+        self.assertIn('Not live', snapshot_status('2026-10-14T11:55:00Z', now))
+        for timestamp in ('invalid', '2026-10-14T13:00:00Z', '2026-10-14T11:55:00'):
+            self.assertIn('Freshness unverified', snapshot_status(timestamp, now))
+        def render():
+            from maxtrade.presentation import render_market_list
+            render_market_list([{'Market': 'WAIT', 'Signal': 'NO TRADE'},
+                                {'Market': 'BUY', 'Signal': 'LONG'},
+                                {'Market': 'ERROR', 'Signal': 'DATA ERROR'}], 'priority')
+        app = AppTest.from_function(render).run()
+        app.selectbox(key='priority_order').set_value('Setups first').run()
+        self.assertEqual(app.expander[0].label, 'BUY details')
+        app.selectbox(key='priority_order').set_value('Data errors first').run()
+        self.assertEqual(app.expander[0].label, 'ERROR details')
         self.assertFalse(app.exception)
 
     def test_paper_position_views_are_read_only_and_filter_states(self):
@@ -711,12 +754,12 @@ class DashboardTests(unittest.TestCase):
             history.return_value.worker_status.return_value = None
             app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=20).run()
             next(button for button in app.button if button.label == 'Scan markets now').click().run()
-            app.radio(key='live_view').set_value('Cards').run()
+            app.radio(key='live_signal_view').set_value('Cards').run()
             next(widget for widget in app.selectbox if widget.label == "Signal filter").select("Candidates").run()
             cards = next(item.value for item in app.markdown if 'class="signal-grid"' in item.value)
             self.assertIn("BTCUSDT", cards)
             self.assertNotIn("ETHUSDT", cards)
-            self.assertIn("<details>", cards)
+            self.assertIn('class="decision-reason"', cards)
             self.assertEqual(app.session_state["scan_results"], rows)
             next(widget for widget in app.selectbox if widget.label == "Signal filter").select("Data errors").run()
             self.assertFalse(app.exception)
@@ -741,7 +784,7 @@ class DashboardTests(unittest.TestCase):
 
     def test_long_card_contains_risk_levels(self):
         html = signal_card({"Market": "BTCUSDT", "Signal": "LONG", "Price": 100, "Entry": 100, "Stop": 97, "Target": 106, "RSI": 60})
-        for text in ["BTCUSDT", "LONG", "Entry", "Stop", "Target", "60.0"]:
+        for text in ["BTCUSDT", "LONG", "Entry", "SL", "TP", "60.0"]:
             self.assertIn(text, html)
 
     def test_credentials_missing_partial_and_ready(self):

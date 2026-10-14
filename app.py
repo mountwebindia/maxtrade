@@ -288,9 +288,11 @@ with signals_tab:
     scan = st.button("Scan markets now", type="primary", width="stretch", icon=":material/radar:")
 
 def show_signals(rows: list[dict], key: str) -> None:
+    from maxtrade.presentation import render_decision_styles
+    render_decision_styles()
     with st.container(key=f'{key}_signal_tools'):
         tools = st.columns([1, 1])
-    view = tools[0].radio("Display", ["List", "Cards", "Table"], horizontal=True, key=f"{key}_view", label_visibility="collapsed", width="stretch")
+    view = tools[0].radio("Display", ["List", "Cards", "Table"], horizontal=True, key=f"{key}_signal_view", label_visibility="collapsed", width="stretch")
     selected_filter = tools[1].selectbox("Signal filter", ["All signals", "Candidates", "No trade", "Data errors"], key=f"{key}_filter", label_visibility="collapsed")
     actions = {"Candidates": {"LONG", "SHORT", "WATCH CALL", "WATCH PUT"}, "No trade": {"NO TRADE"}, "Data errors": {"DATA ERROR"}}
     visible = rows if selected_filter == "All signals" else [row for row in rows if row.get("Signal") in actions[selected_filter]]
@@ -367,7 +369,8 @@ with signals_tab:
         if product == "Options":
             watch_count = int(frame["Signal"].isin(["WATCH CALL", "WATCH PUT"]).sum())
             st.caption(f"Deribit · {watch_count} watchlist candidates · no execution")
-        st.caption(f"Updated {st.session_state['scan_time']} · UTC")
+        from maxtrade.presentation import snapshot_status
+        st.html(snapshot_status(st.session_state['scan_time']))
         if error_count:
             st.warning("Some markets have unavailable or invalid data. Those rows contain no trade signal.")
         show_signals(results, "live")
@@ -405,6 +408,8 @@ def render_analysis_records() -> None:
                 archived = pd.DataFrame(snapshot["results"])
                 st.session_state['records_product'] = snapshot['product']
                 st.session_state['records_interval'] = snapshot['interval']
+                from maxtrade.presentation import snapshot_status
+                st.html(snapshot_status(snapshot['scanned_at'], archived=True))
                 show_signals(snapshot["results"], "history")
                 st.download_button(
                     "Download saved snapshot CSV",
