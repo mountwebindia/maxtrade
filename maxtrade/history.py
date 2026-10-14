@@ -21,6 +21,7 @@ class ScanHistory:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(self._connect()) as connection, connection:
+            connection.execute('BEGIN IMMEDIATE')
             connection.execute("""
                 CREATE TABLE IF NOT EXISTS scans (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,6 +40,8 @@ class ScanHistory:
                 )
             """)
             connection.execute("CREATE TABLE IF NOT EXISTS research_alerts (id INTEGER PRIMARY KEY, fingerprint TEXT UNIQUE NOT NULL, created_at TEXT NOT NULL, symbol TEXT NOT NULL, message TEXT NOT NULL)")
+            if 'expires_at' not in {row['name'] for row in connection.execute('PRAGMA table_info(research_alerts)')}:
+                connection.execute('ALTER TABLE research_alerts ADD COLUMN expires_at TEXT')
             connection.execute("CREATE TABLE IF NOT EXISTS telegram_deliveries (alert_id INTEGER NOT NULL, destination TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, attempted_at TEXT, sent_at TEXT, error TEXT, PRIMARY KEY(alert_id,destination))")
             connection.execute("CREATE TABLE IF NOT EXISTS worker_status (id INTEGER PRIMARY KEY CHECK(id=1), finished_at TEXT NOT NULL, mode TEXT NOT NULL, failures INTEGER NOT NULL)")
             connection.execute("CREATE TABLE IF NOT EXISTS predictions (fingerprint TEXT PRIMARY KEY, scan_id INTEGER NOT NULL, created_at TEXT NOT NULL, product TEXT NOT NULL, pair TEXT NOT NULL, action TEXT NOT NULL, start_ms INTEGER NOT NULL, stop REAL NOT NULL, target REAL NOT NULL, status TEXT NOT NULL DEFAULT 'PENDING', result_json TEXT)")
@@ -117,10 +120,11 @@ class ScanHistory:
                                       (limit,)).fetchall()
         return [{"id": row["id"], "report": json.loads(row["report_json"])} for row in rows]
 
-    def save_alert(self, fingerprint: str, created_at: str, symbol: str, message: str) -> None:
+    def save_alert(self, fingerprint: str, created_at: str, symbol: str, message: str,
+                   expires_at: str | None = None) -> None:
         with closing(self._connect()) as connection, connection:
-            connection.execute("INSERT OR IGNORE INTO research_alerts (fingerprint,created_at,symbol,message) VALUES (?,?,?,?)",
-                               (fingerprint, created_at, symbol, message))
+            connection.execute("INSERT OR IGNORE INTO research_alerts (fingerprint,created_at,symbol,message,expires_at) VALUES (?,?,?,?,?)",
+                               (fingerprint, created_at, symbol, message, expires_at))
 
     def rejection_summary(self) -> list[dict[str, Any]]:
         counts = {}
@@ -164,8 +168,9 @@ class ScanHistory:
             rows = connection.execute('''SELECT a.* FROM research_alerts a
                 LEFT JOIN telegram_deliveries d ON d.alert_id=a.id AND d.destination=?
                 WHERE a.created_at>=? AND d.sent_at IS NULL
+                AND (a.expires_at IS NULL OR a.expires_at>?)
                 AND (d.attempted_at IS NULL OR d.attempted_at<=?)
-                ORDER BY a.id LIMIT ?''', (destination, cutoff, retry, limit)).fetchall()
+                ORDER BY a.id LIMIT ?''', (destination, cutoff, current, retry, limit)).fetchall()
             for row in rows:
                 connection.execute('''INSERT INTO telegram_deliveries (alert_id,destination,attempts,attempted_at)
                     VALUES (?,?,1,?) ON CONFLICT(alert_id,destination) DO UPDATE

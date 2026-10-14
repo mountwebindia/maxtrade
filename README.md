@@ -5,6 +5,12 @@ Settings includes saved Azure verdicts, summaries and concerns, separate timeout
 
 Settings now exposes **AI research mode**, an Azure connection test, and **Start/Pause paper automation**. Autonomous paper mode removes human approval for BTC/ETH USDT spot simulations while retaining evidence, position, freshness and loss-limit vetoes. Closed-trade net win rate, daily P&L/CSV, profit factor and realized drawdown are shown separately from scanner target accuracy.
 
+### Setup notifications
+
+The scheduled BTC/ETH USDT Spot worker queues confirmed hourly BUY/SELL research setups with reason, Entry/SL/TP, UTC candle close and expiry, PAPER decision/blockers, and separately labelled shadow blockers. A setup is not PAPER approval; Spot SELL is bearish research, not a short order. Invalid, incomplete, stale, or NO TRADE technical evidence does not queue a setup alert. All assessments remain in the research archive.
+
+Setup identity is market, direction, and completed hourly candle, so changing blockers or repeated scans do not create duplicate setup messages. The existing persistent Telegram queue retains delivery retries and skips expired setups before delivery; PAPER position events and daily reports retain their existing behavior. This does not guarantee exactly-once network delivery if Telegram accepts a request but its response is lost. On-demand dashboard scans and other markets do not automatically notify. No Telegram configuration, delivery test, paid AI, or worker service is enabled by this change. Production requires a separate worker rollout, not just a dashboard deployment.
+
 ### Optional Gemini Shadow Review
 
 Existing Deterministic/Azure-assisted modes, optional Claude fallback, and historical/training shadow research remain available and unchanged. Gemini is an independent, default-off shadow reviewer, not a replacement AI mode or a trading approver.

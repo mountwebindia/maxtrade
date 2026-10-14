@@ -155,13 +155,19 @@ class WorkerServiceTests(unittest.TestCase):
                 self.assertFalse((root / 'missing').exists())
 
     def test_worker_saves_frozen_prediction_quality(self):
+        from datetime import datetime, timedelta, timezone
         from maxtrade.history import ScanHistory
         quality = {'version': 'test-quality', 'mode': 'SHADOW ONLY'}
+        now = datetime.now(timezone.utc)
+        closed = now.replace(minute=0, second=0, microsecond=0)
         report = {'product': 'Spot', 'symbol': 'B-BTC_USDT', 'technical_bias': 'LONG',
-                  'errors': [], 'created_at': '2026-10-07T10:00:00+00:00', 'blockers': [],
+                  'errors': [], 'created_at': now.isoformat(), 'blockers': [],
                   'quality': quality, 'decision': 'NO TRADE',
-                  'evidence': [{'interval': '1h', 'event_time': '2026-10-07T10:00:00+00:00',
-                                'values': {'stop': 90, 'target': 110}}]}
+                  'evidence': [{'interval': '1h', 'event_time': closed.isoformat(),
+                                'expires_at': (closed + timedelta(hours=1)).isoformat(),
+                                'completed': True, 'event_time_kind': 'candle_close',
+                                'reason': 'Trend aligned',
+                                'values': {'entry': 100, 'stop': 90, 'target': 110}}]}
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'ledger.sqlite3'
             with patch('maxtrade.worker.CoinDCXClient'), \
@@ -174,6 +180,10 @@ class WorkerServiceTests(unittest.TestCase):
             predictions = ScanHistory(path).predictions()
             self.assertEqual(predictions[0]['quality'], quality)
             self.assertEqual(ScanHistory(path).recent_research()[0]['report']['agents'][-1]['agent'], 'challenger')
+            alert = ScanHistory(path).recent_alerts()[0]['message']
+            self.assertIn('BUY setup', alert)
+            self.assertIn('Entry: 100 | SL: 90 | TP: 110', alert)
+            self.assertIn('Reason: Trend aligned', alert)
 
     def test_monitor_reports_research_failure(self):
         import json

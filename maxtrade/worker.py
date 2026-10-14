@@ -16,7 +16,7 @@ from maxtrade.coindcx import CoinDCXClient
 from maxtrade.accuracy import update_outcomes
 from maxtrade.history import DEFAULT_PATH, ScanHistory
 from maxtrade.paper import PaperLedger, coordinate
-from maxtrade.notifications import deliver_notifications, save_daily_summary
+from maxtrade.notifications import deliver_notifications, save_daily_summary, save_setup_alert
 from maxtrade.research import run_coordinated_research
 from maxtrade.settings import (AzureOpenAIConfig, TelegramConfig, azure_openai_config,
                                gemini_shadow_config, telegram_config)
@@ -133,12 +133,7 @@ def run_once(path: Path, symbols: list[str], ai_config: AzureOpenAIConfig | None
                     'Stop': hourly['values']['stop'], 'Target': hourly['values']['target'],
                     'Quality': report.get('quality'),
                 }])
-            fingerprint = hashlib.sha256(json.dumps([symbol, report["technical_bias"], report["blockers"],
-                [(item["interval"], item["event_time"]) for item in report["evidence"]]], sort_keys=True).encode()).hexdigest()
-            history.save_alert(fingerprint, report["created_at"], symbol,
-                               f"Technical direction: {report['technical_bias']} | PAPER faisla: {report['decision']} | "
-                               + (f"Position #{report['paper_position_id']} queue mein hai | " if report.get('paper_position_id') else 'Abhi paper entry nahi | ')
-                               + 'Risk-check details: ' + "; ".join(report["blockers"]))
+            save_setup_alert(history, report, datetime.now(timezone.utc))
             logging.info("Research saved for %s: %s", symbol, report["decision"])
         except Exception:
             errors += 1

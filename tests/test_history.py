@@ -163,6 +163,82 @@ class HistoryTests(unittest.TestCase):
         update_outcomes(history, client, start + 7200000)
         client.spot_candles.assert_called_once()
 
+    def test_setup_alert_identity_freshness_and_research_evidence(self):
+        from copy import deepcopy
+        from datetime import datetime, timedelta, timezone
+        from maxtrade.notifications import save_setup_alert
+        now = datetime(2026, 10, 14, 12, 5, tzinfo=timezone.utc)
+        history = ScanHistory(self.path)
+        report = {'product': 'Spot', 'symbol': 'B-BTC_USDT', 'technical_bias': 'LONG',
+                  'errors': [], 'decision': 'NO TRADE', 'blockers': ['Position cap'],
+                  'quality': {'blockers': ['Low volume']},
+                  'evidence': [{'interval': '1h', 'completed': True, 'event_time_kind': 'candle_close',
+                                'event_time': '2026-10-14T12:00:00+00:00',
+                                'expires_at': '2026-10-14T13:00:00+00:00',
+                                'values': {'entry': 100, 'stop': 90, 'target': 120}}]}
+        self.assertTrue(save_setup_alert(history, report, now))
+        changed = deepcopy(report)
+        changed['blockers'] = ['AI veto']
+        self.assertTrue(save_setup_alert(ScanHistory(self.path), changed, now + timedelta(minutes=15)))
+        self.assertEqual(len(history.recent_alerts()), 1)
+        message = history.recent_alerts()[0]['message']
+        for text in ['BUY setup', 'Research only', 'Entry: 100 | SL: 90 | TP: 120',
+                     '12:00 UTC', 'Position cap', 'Low volume', 'not PAPER approval']:
+            self.assertIn(text, message)
+        for field, value in [('completed', False), ('event_time_kind', 'candle_open'),
+                             ('event_time', 'invalid'), ('event_time', '2026-10-14T12:00:00')]:
+            invalid = deepcopy(report)
+            invalid['evidence'][0][field] = value
+            self.assertFalse(save_setup_alert(history, invalid, now))
+        for field, value in [('entry', float('nan')), ('stop', 101), ('target', 99)]:
+            invalid = deepcopy(report)
+            invalid['evidence'][0]['values'][field] = value
+            self.assertFalse(save_setup_alert(history, invalid, now))
+        self.assertFalse(save_setup_alert(history, report, now - timedelta(minutes=6)))
+        self.assertFalse(save_setup_alert(history, report, now + timedelta(minutes=55)))
+        self.assertFalse(save_setup_alert(history, dict(report, technical_bias='NO TRADE'), now))
+        self.assertFalse(save_setup_alert(history, dict(report, errors=['Provider failed']), now))
+        short = deepcopy(report)
+        short['technical_bias'] = 'SHORT'
+        short['evidence'][0]['values'] = {'entry': 100, 'stop': 110, 'target': 80}
+        self.assertTrue(save_setup_alert(history, short, now))
+        self.assertIn('SELL setup', history.recent_alerts()[0]['message'])
+        self.assertEqual(len(history.recent_alerts()), 2)
+
+    def test_expired_setup_is_not_delivered_but_paper_event_is(self):
+        import json
+        from datetime import datetime, timezone
+        from unittest.mock import patch
+        from maxtrade.notifications import deliver_notifications
+        from maxtrade.settings import telegram_config
+        now = datetime(2026, 10, 14, 13, tzinfo=timezone.utc)
+        history = ScanHistory(self.path)
+        fingerprint = 'setup-v1:' + json.dumps(['Spot', 'BTC', 'LONG', '2026-10-14T12:00:00+00:00'])
+        for index in range(25):
+            history.save_alert(fingerprint + str(index), '2026-10-14T12:05:00+00:00', 'BTC',
+                               'Expired setup', expires_at=now.isoformat())
+        history.save_alert('paper-position:1:OPEN', now.isoformat(), 'BTC', 'Paper OPEN')
+        configuration = telegram_config({'TELEGRAM_BOT_TOKEN': '123:test', 'TELEGRAM_CHAT_ID': '-123'}, {})
+        with patch('maxtrade.notifications.send_message') as send:
+            self.assertEqual(deliver_notifications(history, configuration, now), 0)
+            send.assert_called_once()
+            self.assertIn('Paper OPEN', send.call_args.args[1])
+
+    def test_existing_alert_queue_migrates_without_losing_delivery_records(self):
+        import sqlite3
+        self.path.parent.mkdir(parents=True)
+        with sqlite3.connect(self.path) as connection:
+            connection.execute('CREATE TABLE research_alerts (id INTEGER PRIMARY KEY, fingerprint TEXT UNIQUE NOT NULL, created_at TEXT NOT NULL, symbol TEXT NOT NULL, message TEXT NOT NULL)')
+            connection.execute("INSERT INTO research_alerts VALUES (1, 'legacy', '2026-10-14T12:00:00+00:00', 'BTC', 'Paper OPEN')")
+        history = ScanHistory(self.path)
+        self.assertEqual(history.recent_alerts()[0]['message'], 'Paper OPEN')
+        from datetime import datetime, timezone
+        now = datetime(2026, 10, 14, 12, 5, tzinfo=timezone.utc)
+        alert = history.claim_notifications('test', now)[0]
+        self.assertIsNone(alert['expires_at'])
+        history.finish_notification(alert['id'], 'test', now)
+        self.assertEqual(ScanHistory(self.path).claim_notifications('test', now), [])
+
     def test_telegram_retries_persist_and_success_deduplicates(self):
         from datetime import datetime, timedelta, timezone
         from unittest.mock import patch
