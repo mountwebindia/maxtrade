@@ -85,6 +85,47 @@ def signal_evidence(row: dict[str, Any]) -> str:
     return evidence
 
 
+def paper_blocker_requirement(blocker: str) -> str:
+    requirements = {
+        'Missing technical timeframes': 'A matching assessment needs both completed 1h and 4h candles.',
+        'Expired technical evidence': 'Both timeframe candles must be within their saved validity windows.',
+        'Invalid technical evidence': 'Both timeframe records need valid timestamps and complete signal evidence.',
+        'Technical evidence is not unanimously LONG': 'Both 1h and 4h must be LONG with no technical data errors; Spot SELL is research only.',
+        'Paper fills currently support USDT spot only': 'Only BTC/USDT and ETH/USDT Spot are eligible for this PAPER policy.',
+        'Poor derivatives context liquidity': 'The saved derivatives context must explicitly pass its liquidity gate.',
+        'Human news/event review required': 'The existing policy requires a completed news/event review.',
+        'Azure review veto, uncertainty or unavailable': 'Azure-assisted mode requires a non-shadow CLEAR verdict with no concerns; uncertainty is not approval.',
+        'Paper kill switch, position cap or daily loss limit': 'All account gates must pass: kill switch OFF, no OPEN/PENDING slot, positive equity, and daily P/L above -3% of starting capital. Risk limits are unchanged.',
+        'PAPER kill switch ON': 'New entries remain disabled while the safety kill switch is ON.',
+        'PAPER position slot occupied': 'The existing OPEN/PENDING position occupies the single PAPER slot.',
+        'Paper automation paused': 'The scheduled worker does not create new entries while automation is paused.',
+        'Chart candles are stale': 'Fresh completed chart candles are required; a cached price is not fresh evidence.',
+        'Chart candles stale or refresh failed': 'Fresh completed chart candles are required; a failed refresh is not approval.',
+        'Matching full research assessment unavailable': 'A saved full assessment must match this product and market; chart direction alone cannot approve PAPER entry.',
+        'Worker private configuration unavailable; new entries blocked': 'The scheduled worker needs its existing private configuration to load successfully; entries remain blocked.',
+    }
+    if blocker in requirements:
+        return requirements[blocker]
+    for feed in ('sentiment', 'news', 'derivatives'):
+        if blocker in (f'Missing/stale {feed} evidence', f'Invalid {feed} evidence'):
+            return f'The {feed} source needs valid retrieved/expiry timestamps and current evidence; unavailable data cannot pass.'
+    if blocker in ('Paper account risk state unavailable', 'Invalid paper account values', 'Invalid paper account risk state'):
+        return 'A valid account snapshot needs finite capital, equity and daily P/L before the existing risk gates can be evaluated.'
+    return 'A new matching full assessment must clear this recorded condition. Clearing one blocker does not approve entry.'
+
+
+def render_paper_blockers(blockers: list[str]) -> None:
+    import streamlit as st
+
+    if not blockers:
+        return
+    st.markdown('**Blocking conditions**')
+    for blocker in dict.fromkeys(blockers):
+        st.text(blocker)
+        st.caption('Required evidence: ' + paper_blocker_requirement(blocker))
+    st.caption('All PAPER gates must pass together. This display does not submit orders or clear saved worker vetoes.')
+
+
 def render_market_list(rows: list[dict[str, Any]], key: str) -> None:
     import streamlit as st
 

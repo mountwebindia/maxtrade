@@ -555,6 +555,7 @@ class DashboardTests(unittest.TestCase):
             self.assertTrue(any('WAIT / NO TRADE' in item.value for item in app.warning))
             self.assertTrue(any('No matching full research assessment' in item.value for item in app.markdown))
             self.assertTrue(any('Worker has not completed' in item.value for item in app.warning))
+            self.assertTrue(any('chart direction alone cannot approve PAPER entry' in item.value for item in app.caption))
             self.assertFalse(app.metric)
 
     def test_chart_saved_worker_veto_is_not_overridden_by_risk_recheck(self):
@@ -583,6 +584,7 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(app.dataframe[0].value['Timeframe'].tolist(), ['1h', '4h'])
             self.assertEqual(app.dataframe[0].value['Paper gate'].tolist(), ['BLOCKED', 'BLOCKED'])
             self.assertTrue(any('Setup invalidation:' in item.value for item in app.caption))
+            self.assertTrue(any('private configuration to load successfully' in item.value for item in app.caption))
 
     def test_trade_blockers_show_actual_feed_and_ai_reasons(self):
         def render():
@@ -614,6 +616,16 @@ class DashboardTests(unittest.TestCase):
             self.assertIn('AI concern: 4h trend is not bullish', text)
             self.assertNotIn('Risk review does not approve a BUY entry', text)
             self.assertTrue(any(item.value == 'Paper: WAIT / NO TRADE' for item in app.markdown))
+
+            self.assertTrue(any('Both 1h and 4h must be LONG' in item.value for item in app.caption))
+            self.assertTrue(any('does not submit orders or clear saved worker vetoes' in item.value for item in app.caption))
+
+    def test_paper_blocker_requirements_preserve_policy_and_unknown_conditions(self):
+        from maxtrade.presentation import paper_blocker_requirement
+        self.assertIn('above -3%', paper_blocker_requirement('Paper kill switch, position cap or daily loss limit'))
+        self.assertIn('non-shadow CLEAR', paper_blocker_requirement('Azure review veto, uncertainty or unavailable'))
+        self.assertIn('current evidence', paper_blocker_requirement('Missing/stale derivatives evidence'))
+        self.assertIn('does not approve entry', paper_blocker_requirement('Unrecognized saved veto'))
 
     def test_trade_decision_separates_saved_positions_and_does_not_mutate(self):
         def render():

@@ -97,6 +97,75 @@ class OptionsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             option_chain(self.client, 'GOLD', self.now)
 
+    def test_oi_cached_quotes_are_rechecked_without_mutating_snapshot(self):
+        from datetime import datetime, timedelta, timezone
+        from maxtrade.options import current_oi_quotes
+        now = datetime.now(timezone.utc)
+        for age, value, expected in [(0, 100, 100), (300, 0, 0), (301, 100, None),
+                                     (-31, 100, None), (0, float('nan'), None), (0, -1, None)]:
+            with self.subTest(age=age, value=value):
+                row = {'CALL quote UTC': (now - timedelta(seconds=age)).isoformat(), 'CALL OI': value}
+                result = current_oi_quotes([row], now)[0]
+                self.assertEqual(result['CALL OI'], expected)
+                self.assertIsNone(result['PUT OI'])
+                self.assertIs(row['CALL OI'], value)
+        self.assertIsNone(current_oi_quotes([{'CALL quote UTC': '2026-10-14T00:00:00', 'CALL OI': 1}], now)[0]['CALL OI'])
+
+    def test_oi_failure_states_keep_refresh_and_provider_label(self):
+        import requests
+        import streamlit as st
+        from maxtrade.options import StaleOpenInterest
+        from streamlit.testing.v1 import AppTest
+        response = requests.Response()
+        response.status_code = 429
+        for error, expected in [(StaleOpenInterest(), 'stale'), (requests.Timeout(), 'timed out'),
+                                (requests.HTTPError(response=response), 'rate limited'), (ValueError(), 'invalid')]:
+            with self.subTest(expected=expected):
+                st.cache_data.clear()
+                with patch('maxtrade.options.futures_oi_history', side_effect=error):
+                    app = AppTest.from_string('from maxtrade.options import render_oi_profiles\n'
+                                              'render_oi_profiles("BTC", "Futures")').run()
+                self.assertFalse(app.exception)
+                self.assertIn(expected, app.warning[0].value)
+                self.assertIn('Binance BTCUSDT', app.caption[0].value)
+                self.assertEqual(app.button[0].label, 'Refresh OI')
+
+    def test_oi_display_reports_data_time_and_rejects_cached_expiry(self):
+        from datetime import datetime, timedelta, timezone
+        import streamlit as st
+        from streamlit.testing.v1 import AppTest
+        now = datetime.now(timezone.utc)
+        for age, plotted in [(0, True), (301, False)]:
+            with self.subTest(view='Options', age=age):
+                st.cache_data.clear()
+                rows = [{'Expiry UTC': '2030-01-01T08:00:00+00:00', 'Strike USD': 85000,
+                         'CALL OI': 100, 'CALL quote UTC': (now - timedelta(seconds=age)).isoformat(),
+                         'PUT OI': 50, 'PUT quote UTC': (now - timedelta(seconds=301)).isoformat()}]
+                with patch('maxtrade.options.option_chain', return_value=rows), patch('maxtrade.options.DeribitClient'):
+                    app = AppTest.from_string('from maxtrade.options import render_oi_profiles\n'
+                                              'render_oi_profiles("BTC", "Options")').run(timeout=10)
+                self.assertFalse(app.exception)
+                self.assertEqual(bool(app.get('plotly_chart')), plotted)
+                if plotted:
+                    self.assertTrue(any('1 current / 1 missing or expired' in item.value for item in app.caption))
+                    self.assertTrue(any('Quote times' in item.value for item in app.caption))
+                else:
+                    self.assertIn('No current OI quotes', app.warning[0].value)
+        st.cache_data.clear()
+        stale = [{'timestamp': (now - timedelta(hours=3)).timestamp() * 1000, 'quantity': 100, 'notional': 1000}]
+        fresh = [{'timestamp': now.timestamp() * 1000, 'quantity': 100, 'notional': 1000}]
+        with patch('maxtrade.options.futures_oi_history', side_effect=[stale, fresh]) as request:
+            app = AppTest.from_string('from maxtrade.options import render_oi_profiles\n'
+                                      'render_oi_profiles("ETH", "Futures")').run(timeout=10)
+            self.assertFalse(app.exception)
+            self.assertFalse(app.get('plotly_chart'))
+            self.assertIn('stale', app.warning[0].value)
+            app.button[0].click().run(timeout=10)
+            self.assertFalse(app.exception)
+            self.assertTrue(app.get('plotly_chart'))
+            self.assertTrue(any('Latest sample' in item.value for item in app.caption))
+            self.assertEqual(request.call_count, 2)
+
     def test_chain_auto_load_and_expiry_strike_filters(self):
         from streamlit.testing.v1 import AppTest
         app = AppTest.from_function(chain_preview).run()

@@ -118,6 +118,27 @@ def option_chain(client: DeribitClient, currency: str, now_ms: int | None = None
     return [rows[key] for key in sorted(rows)]
 
 
+class StaleOpenInterest(ValueError):
+    pass
+
+
+def current_oi_quotes(rows: list[dict[str, Any]], now: datetime) -> list[dict[str, Any]]:
+    current = []
+    for original in rows:
+        row = dict(original)
+        for side in ('CALL', 'PUT'):
+            try:
+                quoted = datetime.fromisoformat(str(row[f'{side} quote UTC']).replace('Z', '+00:00'))
+                value = finite_number(row[f'{side} OI'])
+                if quoted.tzinfo is None or not -30 <= (now - quoted).total_seconds() <= 300 or value < 0:
+                    raise ValueError('Invalid OI quote')
+                row[f'{side} OI'] = value
+            except (KeyError, TypeError, ValueError, OverflowError):
+                row[f'{side} OI'] = None
+        current.append(row)
+    return current
+
+
 def futures_oi_history(currency: str, period: str = '1h') -> list[dict[str, Any]]:
     if currency not in {'BTC', 'ETH'} or period not in {'5m', '15m', '1h', '4h', '1d'}:
         raise ValueError('Unsupported futures OI market or period')
@@ -141,7 +162,7 @@ def futures_oi_history(currency: str, period: str = '1h') -> list[dict[str, Any]
             raise ValueError('Unordered futures OI history')
         rows.append({'timestamp': timestamp, 'quantity': quantity, 'notional': notional})
     if now_ms - rows[-1]['timestamp'] > 2 * INTERVAL_MS[period]:
-        raise ValueError('Stale futures OI history')
+        raise StaleOpenInterest('Stale futures OI history')
     return rows
 
 
@@ -171,12 +192,20 @@ def render_oi_profiles(currency: str, product: str) -> None:
                                 key=f'chart_oi_view_{product}')
     if view is None:
         return
+    st.caption(f'Deribit options · OI in {currency} · missing or stale quotes omitted' if view == views[0] else
+               f'Binance {currency}USDT USD-M futures · not CoinDCX OI · latest 100 samples, up to 30 days')
+    if st.button('Refresh OI', icon=':material/refresh:', key='chart_oi_refresh'):
+        load_chain.clear()
+        load_history.clear()
+        st.rerun()
     try:
         if view == views[0]:
             rows, fetched = load_chain(currency)
             expiries = sorted({row['Expiry UTC'] for row in rows})
             expiry = st.selectbox('OI expiry (UTC)', expiries, key=f'chart_oi_expiry_{currency}')
-            frame = pd.DataFrame([row for row in rows if row['Expiry UTC'] == expiry])
+            selected = [row for row in rows if row['Expiry UTC'] == expiry]
+            current = current_oi_quotes(selected, datetime.now(timezone.utc))
+            frame = pd.DataFrame(current)
             figure = go.Figure()
             available = False
             for side, color in [('CALL', '#00b890'), ('PUT', '#f45164')]:
@@ -185,14 +214,22 @@ def render_oi_profiles(currency: str, product: str) -> None:
                 figure.add_bar(x=values, y=frame['Strike USD'], orientation='h', name=side,
                                marker_color=color, hovertemplate=f'{side} OI: %{{x}} {currency}<br>Strike: $%{{y}}<extra></extra>')
             if not available:
-                st.warning('No current OI quotes for this expiry.')
+                st.warning('No current OI quotes for this expiry. Quotes must be within 5 minutes; missing or expired quotes are not plotted.')
                 return
             figure.update_layout(barmode='group', xaxis_title=f'OI ({currency})', yaxis_title='Strike (USD)',
                                  yaxis_type='category')
-            source = f'Deribit options · OI in {currency} · missing or stale quotes omitted'
+            timestamps = [datetime.fromisoformat(row[f'{side} quote UTC'].replace('Z', '+00:00')).astimezone(timezone.utc)
+                          for row in current for side in ('CALL', 'PUT') if row[f'{side} OI'] is not None]
+            omitted = sum(row[f'{side} OI'] is None for row in current for side in ('CALL', 'PUT'))
+            data_status = (f'Quote times {min(timestamps):%d %b %Y %H:%M:%S} to '
+                           f'{max(timestamps):%d %b %Y %H:%M:%S} UTC · '
+                           f'{len(timestamps)} current / {omitted} missing or expired · 5-minute freshness limit')
         else:
             period = st.selectbox('OI period', ['5m', '15m', '1h', '4h', '1d'], index=2, key='chart_oi_period')
             rows, fetched = load_history(currency, period)
+            now_ms = datetime.now(timezone.utc).timestamp() * 1000
+            if not -30000 <= now_ms - rows[-1]['timestamp'] <= 2 * INTERVAL_MS[period]:
+                raise StaleOpenInterest('Stale cached futures OI history')
             frame = pd.DataFrame(rows)
             unit = st.radio('OI units', ['Base currency', 'Notional USDT'], horizontal=True, key='chart_oi_units')
             quantity = unit == 'Base currency'
@@ -200,18 +237,25 @@ def render_oi_profiles(currency: str, product: str) -> None:
                                          y=frame['quantity' if quantity else 'notional'], mode='lines',
                                          name='Open interest', connectgaps=False, line_color='#327ba5'))
             figure.update_layout(xaxis_title='UTC', yaxis_title=f'OI ({currency if quantity else "USDT"})')
-            source = f'Binance {currency}USDT USD-M futures · not CoinDCX OI · latest 100 samples, up to 30 days'
+            latest = datetime.fromtimestamp(rows[-1]['timestamp'] / 1000, timezone.utc)
+            data_status = (f'Latest sample {latest:%d %b %Y %H:%M:%S} UTC · '
+                           f'{max(0, int((now_ms - rows[-1]["timestamp"]) / 60000))} min old · '
+                           f'Freshness limit: 2 × {period}')
         figure.update_layout(height=400, margin={'l': 10, 'r': 10, 't': 45, 'b': 45},
                      legend={'orientation': 'h', 'y': 1.12, 'yanchor': 'bottom'},
                      uirevision=f'{currency}-{view}')
         st.plotly_chart(figure, width='stretch', key='chart_oi_plot')
-        st.caption(f'{source} · fetched {fetched} · cache 60 seconds')
-        if st.button('Refresh OI', icon=':material/refresh:', key='chart_oi_refresh'):
-            load_chain.clear()
-            load_history.clear()
-            st.rerun()
-    except (requests.RequestException, KeyError, TypeError, ValueError):
-        st.warning('OI unavailable from the selected provider. Price candles are unaffected.')
+        st.caption(data_status)
+        st.caption(f'Fetched {fetched} · cache 60 seconds · snapshot, not streaming')
+    except StaleOpenInterest:
+        st.warning('OI data is stale; expired samples are not plotted. Price candles are unaffected.')
+    except requests.Timeout:
+        st.warning('OI provider timed out. Price candles are unaffected.')
+    except requests.HTTPError as error:
+        reason = 'rate limited' if error.response is not None and error.response.status_code == 429 else 'unavailable'
+        st.warning(f'OI provider {reason}. Price candles are unaffected.')
+    except (requests.RequestException, KeyError, TypeError, ValueError, OverflowError, OSError):
+        st.warning('OI unavailable or invalid from the selected provider. Price candles are unaffected.')
 
 
 def render_option_chain(currency: str, key: str) -> None:

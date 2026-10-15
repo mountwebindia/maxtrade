@@ -51,10 +51,13 @@ class ReplayTests(unittest.TestCase):
                 futures_oi_history('SOL')
 
     def test_oi_views_and_provider_failure(self):
+        from datetime import datetime, timezone
         from streamlit.testing.v1 import AppTest
+        now = datetime.now(timezone.utc)
         chain = [{'Expiry UTC': '2026-11-01T08:00:00+00:00', 'Strike USD': 100,
-                  'CALL OI': 10, 'PUT OI': 20}]
-        history = [{'timestamp': 3600000, 'quantity': 10, 'notional': 1000}]
+                  'CALL OI': 10, 'PUT OI': 20,
+                  'CALL quote UTC': now.isoformat(), 'PUT quote UTC': now.isoformat()}]
+        history = [{'timestamp': now.timestamp() * 1000, 'quantity': 10, 'notional': 1000}]
         with patch('maxtrade.options.option_chain', return_value=chain), \
                 patch('maxtrade.options.futures_oi_history', return_value=history):
             app = AppTest.from_string("from maxtrade.options import render_oi_profiles\nrender_oi_profiles('BTC', 'Options')").run()

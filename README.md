@@ -87,6 +87,8 @@ Options charts show the USD perpetual underlying, not coin-denominated option pr
 
 Price controls include visible vertical up/down pan, price-only zoom and reset without changing the time or indicator ranges. The chart toolbar also offers area zoom and zoom in/out; optional **Wheel zoom** is off by default to preserve normal page scrolling. Saved layouts retain wheel zoom and the selected time window, including custom UTC dates. **Back to desk** returns from the standalone chart in the same tab while retaining its selection. Entry/TP/SL lines distinguish OPEN PAPER positions, unfilled PENDING PAPER orders, and actionable research setups. When the latest candle has no actionable setup, the last loaded BUY/SELL transition may supply explicitly labelled **Previous setup** levels; these are historical, not a current entry or PAPER approval. Saved-paper and setup-display toggles control their respective overlays.
 
+The OI panel separates provider quote/sample timestamps from fetch time. Options omit quotes older than five minutes, including quotes that expire while cached. Binance futures samples are rechecked against the existing two-period freshness limit on display. Partial option coverage is counted; stale, timeout, rate-limited and invalid/unavailable states leave **Refresh OI** available without affecting price candles. These are provider-labelled snapshots, not CoinDCX OI or streaming data.
+
 ## Historical research data
 
 Download a bounded, resumable Coinbase Exchange research dataset without AI calls or trades:
@@ -131,6 +133,8 @@ Open **Chart > Market research > Run market research** for a coordinated evidenc
 Reports are saved separately from scans and downloadable as JSON. History includes archived reports and deduplicated internal worker alerts. These are historical observations, not refreshed recommendations. Provider timestamps and errors remain visible. Review provider terms before redistributing headlines commercially; articles are data, never tool instructions.
 
 ## Paper simulation
+
+The chart's PAPER blockers retain their original saved text and now include the evidence required by the existing gate. Account context includes equity, daily P/L and the unchanged 3% daily loss limit. Unknown blockers remain conservative; clearing one condition is not approval. The display neither submits orders nor removes worker vetoes or changes automation/risk settings.
 
 Above-chart 1h/4h checks show LONG agreement, freshness, missing timeframes and assessment age. Setup invalidation follows the existing completed-candle EMA/RSI rules and does not move an existing paper position's saved stop. Snapshot replay rejects missing, duplicate and unaligned candles instead of bridging or filling gaps; this is not certification of the combined hourly/news/Azure policy.
 

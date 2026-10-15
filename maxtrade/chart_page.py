@@ -17,7 +17,7 @@ from maxtrade.charts import candle_figure, chart_analysis, signal_records
 from maxtrade.backtest import ReplaySettings, replay
 from maxtrade.coindcx import CoinDCXClient, INTERVAL_MS, normalize_candles
 from maxtrade.options import DeribitClient, scan_options, render_option_chain
-from maxtrade.presentation import display_number, signal_card
+from maxtrade.presentation import display_number, signal_card, render_paper_blockers
 from maxtrade.scanner import QUOTE_CURRENCIES
 from maxtrade.research import render_market_research
 from maxtrade.auth import require_chart_login
@@ -491,6 +491,9 @@ def render_trade_status(product: str, pair: str, latest, stale: bool) -> None:
         st.caption(f"Paper automation: {'ENABLED' if enabled else 'PAUSED'} | "
                  f"Kill switch: {'ON' if account['kill_switch'] else 'OFF'} | "
                  f"Position slot: {'OCCUPIED' if account['occupied'] else 'FREE'}")
+        st.caption(f"Daily P/L: {display_number(account.get('daily_pnl'))} USDT | "
+               f"Equity: {display_number(account.get('equity'))} USDT | "
+               f"Daily loss limit: 3% of starting capital ({display_number(account.get('capital'))} USDT)")
         history = ScanHistory(ledger.path)
         report = st.session_state.get("research_report")
         if not report or (report.get("product"), report.get("symbol")) != (product, pair):
@@ -528,10 +531,7 @@ def render_trade_status(product: str, pair: str, latest, stale: bool) -> None:
                                   'Expires': item['expires_at'] if item else None})
             with st.expander('1h / 4h evidence checks'):
                 st.dataframe(checklist, hide_index=True, width='stretch')
-            if blockers:
-                st.markdown('**Blocking conditions**')
-            for blocker in blockers:
-                st.text(blocker)
+            render_paper_blockers(blockers)
             if blockers:
                 with st.expander('Blocker evidence'):
                     derivatives = report.get('derivatives')
@@ -560,16 +560,16 @@ def render_trade_status(product: str, pair: str, latest, stale: bool) -> None:
                             st.text('AI review unavailable: ' + str(report.get('ai_error') or 'No structured review saved'))
         else:
             st.write("Paper: WAIT / NO TRADE | No matching full research assessment.")
-            st.markdown('**Blocking conditions**')
-            st.text('Matching full research assessment unavailable')
+            blockers = ['Matching full research assessment unavailable']
             if stale:
-                st.text('Chart candles stale or refresh failed')
+                blockers.append('Chart candles stale or refresh failed')
             if account['kill_switch']:
-                st.text('PAPER kill switch ON')
+                blockers.append('PAPER kill switch ON')
             if not enabled:
-                st.text('Paper automation paused')
+                blockers.append('Paper automation paused')
             if account['occupied']:
-                st.text('PAPER position slot occupied')
+                blockers.append('PAPER position slot occupied')
+            render_paper_blockers(blockers)
         st.markdown('##### Actual PAPER position')
         positions = [position for position in ledger.positions()
                      if product == 'Spot' and position['symbol'] == pair and position['state'] in {'OPEN', 'PENDING'}]
