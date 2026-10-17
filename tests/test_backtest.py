@@ -97,6 +97,123 @@ class ReplayTests(unittest.TestCase):
         self.assertAlmostEqual(paid["equity"]["Equity"].iloc[-1] - 10000,
                                paid["trades"]["Net PnL"].sum())
 
+    def test_performance_benchmark_costs_and_warmup(self):
+        from maxtrade.performance import replay_performance
+        candles = self.candles()
+        candles[51].update(open=102, high=103, close=102)
+        candles[-1].update(open=104, high=110, close=109)
+        with patch('maxtrade.backtest.chart_analysis', return_value=self.signals()):
+            result = replay(candles, '1h', True, ReplaySettings(funding_bps_8h=10))
+        before = result['equity'].copy(deep=True)
+        report = replay_performance(result, candles, '1h')
+        self.assertEqual(len(report['equity']), 9)
+        self.assertEqual(report['equity'].index[0].timestamp(), 51 * 3600)
+        self.assertEqual(report['equity'].index[-1].timestamp(), 59 * 3600)
+        cost = 15 / 10000
+        units = 10000 / (102 * (1 + cost))
+        funding = units * 102 * 10 / 10000 * 8 / 8
+        self.assertAlmostEqual(report['equity']['Buy and hold'].iloc[-1], units * 104 * (1 - cost) - funding)
+        self.assertEqual(report['trade_count'], 1)
+        self.assertAlmostEqual(report['expectancy'], result['trades']['Net PnL'].iloc[0])
+        self.assertIsNone(report['metrics']['Strategy']['sharpe'])
+        self.assertTrue(before.equals(result['equity']))
+
+    def test_performance_complete_days_months_and_undefined_ratios(self):
+        import pandas as pd
+        from maxtrade.performance import replay_performance
+        candles = [dict(time=index * 3600000, open=100, high=101, low=99, close=100)
+                   for index in range(24 * 100)]
+        equity = pd.DataFrame({'Equity': [10000.0] * len(candles)},
+                              index=pd.to_datetime([bar['time'] for bar in candles], unit='ms', utc=True))
+        result = dict(equity=equity, trades=pd.DataFrame({'Net PnL': []}), settings=ReplaySettings())
+        report = replay_performance(result, candles, '1h')
+        self.assertEqual(report['complete_days'], 96)
+        self.assertEqual(list(report['monthly_returns_pct'].index), ['1970-02', '1970-03'])
+        self.assertEqual(report['metrics']['Strategy']['net_return_pct'], 0)
+        self.assertIsNone(report['metrics']['Strategy']['sharpe'])
+        self.assertIsNone(report['metrics']['Strategy']['sortino'])
+        self.assertIsNone(report['expectancy'])
+        self.assertIsNone(report['profit_factor'])
+        for index in range(len(equity)):
+            equity.iloc[index, 0] = 10000 * (1.01 if index // 24 % 2 else 1)
+        report = replay_performance(result, candles, '1h')
+        returns = report['daily_returns']['Strategy']
+        self.assertAlmostEqual(report['metrics']['Strategy']['sharpe'],
+                               returns.mean() / returns.std(ddof=1) * 365 ** 0.5)
+        self.assertAlmostEqual(report['metrics']['Strategy']['sortino'],
+                               returns.mean() / (returns.clip(upper=0).pow(2).mean() ** 0.5) * 365 ** 0.5)
+
+    def test_performance_rejects_invalid_and_misaligned_equity(self):
+        from maxtrade.performance import replay_performance
+        result = replay(self.candles(), '1h', False)
+        for value in (0, -1, float('nan'), float('inf')):
+            with self.subTest(value=value):
+                broken = dict(result, equity=result['equity'].copy())
+                broken['equity'].iloc[51, 0] = value
+                with self.assertRaises(ValueError):
+                    replay_performance(broken, self.candles(), '1h')
+        candles = self.candles()
+        candles[51]['time'] += 3600000
+        with self.assertRaises(ValueError):
+            replay_performance(result, candles, '1h')
+
+    def test_performance_view_and_snapshot_invalidation(self):
+        from streamlit.testing.v1 import AppTest
+        candles = self.candles()
+        code = """
+from maxtrade.chart_page import render_replay
+import streamlit as st
+render_replay(st.session_state['snapshot'], st.session_state.get('interval', '1h'), 'Spot')
+"""
+        app = AppTest.from_string(code)
+        app.session_state['snapshot'] = dict(selection=('Spot', 'B-BTC_USDT', '1h'), candles=candles)
+        app.run()
+        self.assertFalse(app.exception)
+        app.button(key='replay_run').click().run()
+        self.assertFalse(app.exception)
+        self.assertTrue(any('Strategy performance' in heading.value for heading in app.markdown))
+        self.assertEqual(len(app.get('download_button')), 2)
+        self.assertTrue(any('fewer than 30' in message.value for message in app.info))
+        self.assertEqual(list(app.dataframe[0].value['Series']), ['Strategy', 'Buy and hold'])
+        app.session_state['interval'] = '4h'
+        app.run()
+        self.assertFalse(app.exception)
+        self.assertTrue(any('does not match' in caption.value for caption in app.caption))
+        self.assertFalse(app.get('download_button'))
+        app.session_state['interval'] = '1h'
+        with patch('streamlit.delta_generator.DeltaGenerator.download_button') as download:
+            app.run()
+        self.assertFalse(app.exception)
+        import json
+        from hashlib import sha256
+        payload = next(call.args[1] for call in download.call_args_list
+                       if call.args[0] == 'Performance JSON')
+        exported = json.loads(payload)
+        self.assertFalse(exported['execution_enabled'])
+        self.assertEqual(exported['candles'], candles)
+        self.assertEqual(exported['settings']['fee_bps'], 10)
+        self.assertEqual(exported['dataset_sha256'], sha256(json.dumps(
+            candles, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest())
+        self.assertEqual(len(exported['equity']), 9)
+        self.assertIsNone(exported['metrics']['Strategy']['sharpe'])
+
+    def test_performance_view_retains_equity_when_metadata_cannot_export(self):
+        from streamlit.testing.v1 import AppTest
+        candles = self.candles()
+        result = replay(candles, '1h', False)
+        candles[0]['volume'] = float('nan')
+        app = AppTest.from_string("""
+from maxtrade.chart_page import render_replay_performance
+import streamlit as st
+render_replay_performance(st.session_state['result'], st.session_state['snapshot'], '1h', 'Spot')
+""")
+        app.session_state['result'] = result
+        app.session_state['snapshot'] = dict(selection=('Spot', 'B-BTC_USDT', '1h'), candles=candles)
+        app.run()
+        self.assertFalse(app.exception)
+        self.assertEqual(len(app.get('download_button')), 1)
+        self.assertTrue(any('Performance JSON unavailable' in message.value for message in app.warning))
+
     def test_stop_precedes_target_on_ambiguous_bar(self):
         candles = self.candles()
         candles[51].update(high=112, low=94)

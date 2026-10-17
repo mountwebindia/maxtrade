@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+from dataclasses import asdict
 from datetime import datetime, timezone
+from hashlib import sha256
 from html import escape
 import json
 from pathlib import Path
@@ -15,6 +17,7 @@ import streamlit.components.v1 as components
 
 from maxtrade.charts import candle_figure, chart_analysis, signal_records
 from maxtrade.backtest import ReplaySettings, replay
+from maxtrade.performance import replay_performance
 from maxtrade.coindcx import CoinDCXClient, INTERVAL_MS, normalize_candles
 from maxtrade.options import DeribitClient, scan_options, render_option_chain
 from maxtrade.presentation import display_number, signal_card, render_paper_blockers
@@ -277,6 +280,11 @@ def render_chart_page(workspace: bool = False) -> None:
             st.query_params.pop('view', None)
             st.session_state['navigation'] = 'Chart'
             st.rerun()
+    asset_class = st.radio('Asset class', ['Crypto', 'NSE equities'], horizontal=True, key='chart_asset_class')
+    if asset_class == 'NSE equities':
+        from maxtrade.stock_page import render_stock_page
+        render_stock_page()
+        return
     product, interval, pair, live = render_chart_controls(workspace)
     st.fragment(run_every='10s' if live else None)(render_chart_snapshot)(product, interval, pair, live, workspace)
     if not workspace:
@@ -807,6 +815,69 @@ def render_chart_snapshot(product: str, interval: str, pair: str, live: bool, wo
         st.caption("Price display uses 10-second REST polling, not a tick-by-tick WebSocket stream. Signals use completed candles only; the forming candle never changes a confirmed signal. No automated orders.")
 
 
+def render_replay_performance(result: dict, snapshot: dict, interval: str, product: str) -> None:
+    st.markdown('#### Strategy performance')
+    try:
+        report = replay_performance(result, snapshot['candles'], interval)
+    except (ValueError, TypeError, KeyError) as error:
+        st.warning(f'Performance report unavailable: {error}')
+        return
+    curves = report['equity']
+    st.caption(f"Historical replay only · {report['warmup_bars']} warm-up bars excluded · "
+               f"{curves.index[0].isoformat()} to {curves.index[-1].isoformat()} · "
+               f"{report['complete_days']} complete UTC daily returns · {report['trade_count']} trades")
+    st.line_chart(curves, height=260, width='stretch', color=['#168b75', '#cc5b5b'])
+    comparison = [{'Series': name,
+                   'Net return %': values['net_return_pct'],
+                   'Max drawdown %': values['max_drawdown_pct'],
+                   'Sharpe': values['sharpe'], 'Sortino': values['sortino']}
+                  for name, values in report['metrics'].items()]
+    st.dataframe(pd.DataFrame(comparison), hide_index=True, width='stretch')
+    st.caption(f"Return difference vs buy and hold: {report['excess_return_pp']:+.2f} percentage points · "
+               f"Mean net PnL / trade: {display_number(report['expectancy'])} · "
+               f"Profit factor: {display_number(report['profit_factor'])}")
+    if report['complete_days'] < 30:
+        st.info('Sharpe and Sortino unavailable: fewer than 30 complete UTC daily returns.')
+    st.caption('Risk ratios use daily returns, 365-day annualization and a zero risk-free/target return. '
+               'Undefined ratios remain blank; 30 days is a reporting minimum, not statistical certification.')
+    if not report['monthly_returns_pct'].empty:
+        st.markdown('##### Complete-month returns (%)')
+        st.dataframe(report['monthly_returns_pct'], width='stretch')
+    else:
+        st.caption('Complete-month returns unavailable: no full UTC calendar month between valuations.')
+    st.caption('Buy and hold is a fully allocated, unleveraged long reference on the same candles, '
+               'not an allocation-matched strategy. It buys at the first post-warm-up next open, '
+               'sells at the final bar open, and includes the same per-fill cost and funding assumptions. '
+               'Equity uses bar-close UTC timestamps except the final liquidation at the final bar open. '
+               'Futures results are synthetic, not a verified exchange contract return.')
+    columns = st.columns(2)
+    columns[1].download_button('Equity CSV', curves.to_csv(), file_name='maxtrade_equity.csv',
+                              mime='text/csv', icon=':material/download:', key='replay_equity_csv')
+    try:
+        dataset = json.dumps(snapshot['candles'], sort_keys=True, separators=(',', ':'), allow_nan=False)
+    except (TypeError, ValueError):
+        st.warning('Performance JSON unavailable: candle metadata contains non-finite or unsupported values.')
+        return
+    export = {
+        'version': 'replay-performance-v1', 'execution_enabled': False,
+        'selection': snapshot['selection'], 'product': product, 'interval': interval,
+        'dataset_sha256': sha256(dataset.encode('utf-8')).hexdigest(),
+        'settings': asdict(result['settings']), 'warmup_bars': report['warmup_bars'],
+        'complete_daily_returns': report['complete_days'], 'metrics': report['metrics'],
+        'trade_count': report['trade_count'], 'expectancy': report['expectancy'],
+        'profit_factor': report['profit_factor'], 'excess_return_pp': report['excess_return_pp'],
+        'assumptions': {'annualization_days': 365, 'risk_free_return': 0,
+                        'minimum_daily_returns': 30, 'benchmark_allocation_pct': 100,
+                        'final_liquidation': 'final bar open', 'forward_validation': False},
+        'candles': snapshot['candles'],
+        'equity': json.loads(curves.reset_index().to_json(orient='records', date_format='iso')),
+        'monthly_returns_pct': json.loads(report['monthly_returns_pct'].reset_index().to_json(orient='records')),
+    }
+    columns[0].download_button('Performance JSON', json.dumps(export, indent=2, allow_nan=False),
+                              file_name='maxtrade_performance.json', mime='application/json',
+                              icon=':material/download:', key='replay_performance_json')
+
+
 def render_replay(snapshot: dict, interval: str, product: str) -> None:
     with st.expander("Backtest", icon=":material/science:"):
         st.caption(f"Historical simulation · {len(snapshot['candles'])} candles · capital and PnL in market quote currency")
@@ -819,7 +890,8 @@ def render_replay(snapshot: dict, interval: str, product: str) -> None:
         funding = columns[1].number_input("Funding cost / 8h (bps)", min_value=0.0, max_value=100.0, value=0.0,
                                           disabled=product == "Spot", key="replay_funding")
         settings = ReplaySettings(cash, risk, allocation, fee, slippage, funding if product == "Futures" else 0)
-        signature = (snapshot["selection"], tuple((bar["time"], bar["open"], bar["high"], bar["low"], bar["close"]) for bar in snapshot["candles"]), settings)
+        signature = (snapshot["selection"], interval, product,
+                 tuple((bar["time"], bar["open"], bar["high"], bar["low"], bar["close"], bar.get('volume')) for bar in snapshot["candles"]), settings)
         if st.button("Run backtest", icon=":material/play_arrow:", width="stretch", key="replay_run"):
             st.session_state.pop("replay_result", None)
             try:
@@ -836,7 +908,7 @@ def render_replay(snapshot: dict, interval: str, product: str) -> None:
                     ("Net return", f"{result['return_pct']:.2f}%"),
                     ("Max drawdown", f"{result['drawdown_pct']:.2f}%"),
                     ("Trades", str(len(result["trades"])))]) + '</div>', unsafe_allow_html=True)
-            st.line_chart(result["equity"]["Equity"], height=240, width="stretch")
+            render_replay_performance(result, snapshot, interval, product)
             st.caption(f"Win rate: {display_number(result['win_rate'], 1)}% · Funding estimate: {display_number(result['funding'])}")
             if result["trades"].empty:
                 st.info("No completed simulated trades in this snapshot.")
