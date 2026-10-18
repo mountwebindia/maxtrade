@@ -280,8 +280,8 @@ def render_chart_page(workspace: bool = False) -> None:
             st.query_params.pop('view', None)
             st.session_state['navigation'] = 'Chart'
             st.rerun()
-    asset_class = st.radio('Asset class', ['Crypto', 'NSE equities'], horizontal=True, key='chart_asset_class')
-    if asset_class == 'NSE equities':
+    asset_class = st.radio('Asset class', ['Crypto', 'Indian markets'], horizontal=True, key='chart_asset_class')
+    if asset_class == 'Indian markets':
         from maxtrade.stock_page import render_stock_page
         render_stock_page()
         return

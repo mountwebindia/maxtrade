@@ -9,6 +9,22 @@ from maxtrade.settings import azure_openai_config, credential_status
 
 
 class DashboardTests(unittest.TestCase):
+    def test_notification_history_failure_does_not_abort_rendering(self):
+        def render():
+            import sqlite3
+            import streamlit as st
+            from unittest.mock import patch
+            from maxtrade.notifications import render_telegram_settings
+            with patch('maxtrade.history.ScanHistory',
+                       side_effect=sqlite3.DatabaseError('database disk image is malformed')):
+                render_telegram_settings()
+            st.markdown('Rendering continued')
+
+        app = AppTest.from_function(render, default_timeout=20).run()
+        self.assertFalse(app.exception)
+        self.assertTrue(any('Notification history unavailable' in item.value for item in app.warning))
+        self.assertTrue(any('Rendering continued' in item.value for item in app.markdown))
+
     def test_gemini_private_settings_are_atomic_and_owner_only(self):
         import tempfile
         from maxtrade.settings import load_gemini_settings, save_gemini_settings
@@ -200,6 +216,9 @@ class DashboardTests(unittest.TestCase):
             self.assertNotIn('\n            [role="tablist"] { position: fixed;', styles)
             self.assertIn('.st-key-login_form { max-width: 440px;', styles)
             self.assertNotIn('[data-testid="stForm"] { max-width: 440px;', styles)
+            self.assertNotIn('.st-key-chart_product { position: fixed;', styles)
+            self.assertTrue(any('class="desk-title">MaxTrade</div>' in item.value
+                                for item in app.markdown))
 
     def test_chart_display_controls_are_grouped_and_preserve_preferences(self):
         def render():

@@ -211,9 +211,7 @@ st.markdown(
     .st-key-navigation [role="tablist"] {position:fixed;bottom:0;left:0;right:0;z-index:999;margin:0;padding:.25rem .5rem calc(.25rem + env(safe-area-inset-bottom));border-top:1px solid var(--line);justify-content:center;}
     .st-key-navigation [role="tab"] {flex:1;max-width:240px;min-width:0;min-height:54px;}
     .block-container {padding-bottom:calc(6rem + env(safe-area-inset-bottom));}
-    .st-key-chart_product {position:fixed;top:0;left:58px;right:12px;width:calc(100% - 70px) !important;z-index:998;height:58px;display:flex;align-items:center;background:transparent !important;margin-top:0 !important;}
-    .block-container:has(.st-key-chart_product) {padding-top:70px;}
-    .block-container:has(.st-key-chart_product) .desk-header {position:fixed;top:0;left:0;right:0;height:58px;box-sizing:border-box;margin:0;z-index:997;}
+    .st-key-chart_product {width:100% !important;margin-top:0 !important;}
     .st-key-chart_product [role="radiogroup"] {gap:.25rem;}
     .st-key-chart_product, .st-key-chart_interval { background: #fff; }
     [data-testid="stPlotlyChart"] { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
@@ -226,7 +224,7 @@ st.markdown(
         .market-ohlc { gap: 1rem; }
     }
     </style>
-    <div class="desk-header"><div class="desk-brand"><div class="brand-mark" role="img" aria-label="MaxTrade">M</div></div></div>
+    <div class="desk-header"><div class="desk-brand"><div class="brand-mark" role="img" aria-label="MaxTrade">M</div><div class="desk-title">MaxTrade</div></div></div>
     """,
     unsafe_allow_html=True,
 )
@@ -240,7 +238,7 @@ def select_page(page: str) -> None:
     st.session_state["navigation"] = page
 
 with st.sidebar:
-    st.markdown('<div class="desk-header"><div class="desk-brand"><div class="brand-mark" role="img" aria-label="MaxTrade">M</div></div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="desk-header"><div class="desk-brand"><div class="brand-mark" role="img" aria-label="MaxTrade">M</div><div class="desk-title">MaxTrade</div></div></div>', unsafe_allow_html=True)
     for page, icon in [("Signals", "radar"), ("Chart", "candlestick_chart"), ("History", "history"), ("Settings", "tune")]:
         st.button(page, icon=f":material/{icon}:", key=f"menu_{page.lower()}",
                   type="primary" if st.session_state.get("navigation", "Signals") == page else "secondary",

@@ -111,6 +111,7 @@ def save_daily_summary(history, ledger, now: datetime, days_ago: int = 1) -> Non
 
 
 def render_telegram_settings() -> None:
+    import sqlite3
     import streamlit as st
     from maxtrade.history import ScanHistory
 
@@ -131,6 +132,10 @@ def render_telegram_settings() -> None:
             st.success('Telegram test delivered.')
         except ValueError as error:
             st.warning(str(error))
-    status = ScanHistory().notification_status()
+    try:
+        status = ScanHistory().notification_status()
+    except (OSError, sqlite3.Error):
+        st.warning('Notification history unavailable: database access failed. Stored alerts have not been replaced or reset.')
+        return
     if status:
         st.dataframe(status, hide_index=True, width='stretch')
