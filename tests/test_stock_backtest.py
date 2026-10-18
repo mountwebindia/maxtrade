@@ -368,6 +368,38 @@ class MarketChartTests(unittest.TestCase):
             app.selectbox(key='market_interval').set_value('1m').run()
             self.assertEqual(fetch.call_count, calls)
 
+    def test_intraday_chart_session_axis_and_recent_window(self):
+        index = pd.DatetimeIndex([session + pd.Timedelta(hours=9, minutes=15 + offset * 5)
+                                 for session in pd.bdate_range('2026-10-12', periods=4, tz=INDIA)
+                                 for offset in range(75)])
+        frame = pd.DataFrame({'Open': 100., 'High': 104., 'Low': 96., 'Close': 101., 'Volume': 0.}, index=index)
+        dataset = normalize_market_history(frame, '^NSEI', 'NSE', True,
+                                           datetime(2026, 10, 17, tzinfo=INDIA), interval='5m')
+        with patch('maxtrade.stock_page.fetch_market_history', return_value=dataset):
+            app = self.app().run()
+            app.selectbox(key='market_interval').set_value('5m').run()
+            self.assertFalse(app.exception)
+            figure = json.loads(app.get('plotly_chart')[0].proto.spec)
+            self.assertEqual(figure['layout']['xaxis']['type'], 'category')
+            self.assertEqual(figure['layout']['xaxis']['range'], [239.5, 299.5])
+            self.assertEqual(figure['data'][0]['x'][0], '2026-10-12 09:15')
+            self.assertEqual(figure['data'][0]['x'][-1], '2026-10-15 15:25')
+            self.assertEqual(len(figure['data'][0]['x']), 300)
+            axis = figure['layout']['xaxis']
+            self.assertEqual(axis['tickmode'], 'auto')
+            self.assertEqual(axis['nticks'], 4)
+            self.assertEqual(axis['tickangle'], 0)
+            self.assertEqual(axis['labelalias']['2026-10-12 09:15'], '12 Oct<br>09:15')
+            self.assertEqual(len(axis['labelalias']), 300)
+            self.assertTrue(figure['layout']['yaxis']['fixedrange'])
+            self.assertTrue(figure['layout']['yaxis']['autorange'])
+            candles = figure['data'][0]
+            self.assertEqual(candles['increasing']['fillcolor'], '#137b69')
+            self.assertEqual(candles['decreasing']['fillcolor'], '#b94343')
+            self.assertEqual(candles['increasing']['line']['width'], 1)
+            self.assertTrue(figure['layout']['uirevision'].startswith('market-candles-v3:'))
+            self.assertGreater(figure['layout']['legend']['y'], 1)
+
     def test_provider_error_refresh_and_symbol_failure_remove_old_chart(self):
         with patch('maxtrade.stock_page.fetch_market_history', side_effect=[MarketDataError('Rate-limited'), self.dataset(), MarketDataError('Unavailable')]):
             app = self.app().run()
@@ -395,6 +427,100 @@ class MarketChartTests(unittest.TestCase):
             self.assertIn('UNAVAILABLE', [metric.value for metric in app.metric])
             self.assertNotIn('PUT BUY', [metric.value for metric in app.metric])
             self.assertEqual([metric.value for metric in app.metric if 'Underlying' in metric.label], ['N/A'] * 3)
+            self.assertFalse(app.exception)
+
+
+class StockOptionChainTests(unittest.TestCase):
+    def setUp(self):
+        from maxtrade.stock_options import load_chain, load_expiries
+        load_chain.clear()
+        load_expiries.clear()
+
+    def payload(self):
+        return [{'expiry': '2099-01-01', 'underlying_key': 'NSE_INDEX|Nifty 50',
+                 'strike_price': 23000, 'underlying_spot_price': 23010,
+                 'call_options': {'instrument_key': 'NSE_FO|1',
+                                  'market_data': {'ltp': 100, 'bid_price': 99, 'ask_price': 101,
+                                                  'oi': 100, 'prev_oi': 120},
+                                  'option_greeks': {'delta': .5, 'theta': -3, 'iv': 12}},
+                 'put_options': {'instrument_key': 'NSE_FO|2',
+                                 'market_data': {'oi': 200}, 'option_greeks': {'delta': -.5}}}]
+
+    def test_normalization_preserves_missing_and_signed_values(self):
+        from maxtrade.stock_options import normalize_option_chain
+        row = normalize_option_chain(self.payload(), 'NSE_INDEX|Nifty 50', '2099-01-01')[0]
+        self.assertEqual(row['CE OI change'], -20)
+        self.assertEqual(row['PE Delta'], -.5)
+        self.assertEqual(row['CE Theta'], -3)
+        self.assertIsNone(row['PE LTP'])
+        self.assertIsNone(row['PE OI change'])
+
+    def test_invalid_snapshots_rejected(self):
+        from maxtrade.stock_options import OptionChainError, normalize_option_chain
+        for field, value in [('underlying_key', 'BSE_INDEX|SENSEX'), ('expiry', '2099-02-01'),
+                             ('strike_price', float('nan')), ('strike_price', True)]:
+            payload = self.payload()
+            payload[0][field] = value
+            with self.subTest(field=field), self.assertRaises(OptionChainError):
+                normalize_option_chain(payload, 'NSE_INDEX|Nifty 50', '2099-01-01')
+        for market in ([], '', {'oi': -1}, {'bid_price': 110, 'ask_price': 100}):
+            payload = self.payload()
+            payload[0]['call_options']['market_data'] = market
+            with self.subTest(market=market), self.assertRaises(OptionChainError):
+                normalize_option_chain(payload, 'NSE_INDEX|Nifty 50', '2099-01-01')
+        payload = self.payload()
+        payload[0]['put_options']['instrument_key'] = 'NSE_FO|1'
+        with self.assertRaises(OptionChainError):
+            normalize_option_chain(payload, 'NSE_INDEX|Nifty 50', '2099-01-01')
+
+    def test_request_authorization_and_sanitized_failures(self):
+        from unittest.mock import Mock
+        import requests
+        from maxtrade.stock_options import OptionChainError, option_request
+        response = Mock(status_code=200)
+        response.json.return_value = {'status': 'success', 'data': self.payload()}
+        with patch('maxtrade.stock_options.requests.get', return_value=response) as get:
+            option_request('chain', 'NSE_INDEX|Nifty 50', 'fixture-token', '2099-01-01')
+            self.assertEqual(get.call_args.kwargs['params']['expiry_date'], '2099-01-01')
+            self.assertEqual(get.call_args.kwargs['headers']['Authorization'], 'Bearer fixture-token')
+        for code in (401, 403):
+            response.status_code = code
+            with patch('maxtrade.stock_options.requests.get', return_value=response), self.assertRaisesRegex(OptionChainError, 'private access token'):
+                option_request('chain', 'NSE_INDEX|Nifty 50', 'fixture-token')
+        with patch('maxtrade.stock_options.requests.get', side_effect=requests.Timeout('fixture-token')), self.assertRaises(OptionChainError) as caught:
+            option_request('chain', 'NSE_INDEX|Nifty 50', 'fixture-token')
+        self.assertNotIn('fixture-token', str(caught.exception))
+
+    def test_contract_validation_and_cache_isolation(self):
+        from maxtrade.stock_options import OptionChainError, load_chain, load_expiries
+        contracts = [{'expiry': '2099-01-01', 'underlying_key': 'NSE_INDEX|Nifty 50',
+                      'instrument_key': 'NSE_FO|1', 'instrument_type': 'CE'}]
+        with patch('maxtrade.stock_options.option_request', return_value=contracts):
+            self.assertEqual(load_expiries('NSE_INDEX|Nifty 50', 'auth-a', 'fixture'), ['2099-01-01'])
+            contracts[0]['instrument_type'] = 'FUT'
+            with self.assertRaises(OptionChainError):
+                load_expiries('NSE_INDEX|Nifty 50', 'auth-b', 'fixture')
+        with patch('maxtrade.stock_options.option_request', return_value=self.payload()) as request:
+            for auth in ('auth-a', 'auth-a', 'auth-b'):
+                load_chain('NSE_INDEX|Nifty 50', '2099-01-01', auth, 'fixture')
+            self.assertEqual(request.call_count, 2)
+
+    def test_option_workspace_missing_token_and_table(self):
+        source = 'from maxtrade.stock_page import render_stock_page\nrender_stock_page()'
+        with patch('maxtrade.stock_page.fetch_market_history', side_effect=MarketDataError('Fixture')), patch('maxtrade.stock_options.access_token', return_value=''):
+            app = AppTest.from_string(source, default_timeout=20).run()
+            app.radio(key='stock_workspace').set_value('Option chain').run()
+            self.assertTrue(app.info)
+            self.assertFalse(app.dataframe)
+            self.assertFalse(app.exception)
+        with patch('maxtrade.stock_options.access_token', return_value='fixture'), patch('maxtrade.stock_options.load_expiries', return_value=['2099-01-01']), patch('maxtrade.stock_options.load_chain') as chain:
+            from maxtrade.stock_options import normalize_option_chain
+            chain.return_value = (normalize_option_chain(self.payload(), 'NSE_INDEX|Nifty 50', '2099-01-01'), datetime.now(timezone.utc))
+            app.run()
+            self.assertEqual(len(app.dataframe), 2)
+            self.assertIn('CE LTP', app.dataframe[0].value.columns)
+            self.assertIn('PE LTP', app.dataframe[0].value.columns)
+            self.assertTrue(any('quote age is unknown' in warning.value for warning in app.warning))
             self.assertFalse(app.exception)
 
 

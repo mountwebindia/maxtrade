@@ -20,6 +20,28 @@ remain supported. New chart sessions default to Light. Price labels use two
 decimals above one unit and eight below; underlying data and exports are unchanged.
 Authentication, PAPER automation, kill-switch settings and risk checks are unchanged.
 
+## Indian Option Chain
+
+The Indian markets workspace includes an Upstox option chain for NIFTY 50,
+NIFTY BANK and SENSEX. Expiries come from the option-contract API, not a fixed
+calendar. The chain includes CE/PE premiums, bid/ask, volume, OI and OI change,
+IV and Greeks, with an ATM-centred strike window and full-chain CSV export.
+
+Configure `UPSTOX_ACCESS_TOKEN` privately as a server environment variable or
+in the existing owner-only `/app/data/private/secrets.toml`. Environment values
+take precedence. Obtain and renew the token through Upstox's authorized access
+flow; never paste it into chat or commit it. Missing or rejected credentials
+leave the chain unavailable without affecting market charts. No credentials
+are bundled and no order API is used.
+
+Contracts are cached for five minutes and chain snapshots for 30 seconds;
+Refresh clears both caches. Upstox's documented chain response has no exchange
+quote timestamp, so retrieval time does not establish quote freshness. Missing
+values remain unavailable, not zero. This is snapshot research only, not option
+buy approval or live order execution. Dashboard deployment does not activate
+the feed until a valid private token is configured and an authenticated request
+succeeds. Provider availability for each selected index remains required.
+
 # Shadow Training
 
 The research service can enable `--training-registry /app/data/training/models.sqlite3`.

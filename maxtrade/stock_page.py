@@ -24,9 +24,12 @@ def cached_replay(dataset, settings, evaluation_start):
 
 
 def render_stock_page() -> None:
-    workspace = st.radio('Indian markets', ['Market charts', 'CSV research'], horizontal=True,
-                         key='stock_workspace')
-    if workspace == 'CSV research':
+    workspace = st.radio('Indian markets', ['Market charts', 'Option chain', 'CSV research'], horizontal=True,
+                         key='stock_workspace', label_visibility='collapsed')
+    if workspace == 'Option chain':
+        from maxtrade.stock_options import render_stock_option_chain
+        render_stock_option_chain()
+    elif workspace == 'CSV research':
         render_stock_research()
     else:
         render_market_chart()
@@ -43,15 +46,29 @@ def cached_market_search(query, exchange):
 
 
 def render_market_chart() -> None:
-    st.caption('Underlying research | Delayed provider data | No PAPER or live orders')
-    exchange = st.radio('Exchange', ['Indices', 'NSE', 'BSE'], horizontal=True, key='market_exchange')
+    st.markdown('''<style>
+        .st-key-market_identity [data-testid="stHorizontalBlock"],
+        .st-key-market_toolbar [data-testid="stHorizontalBlock"] {align-items:flex-end;}
+        @media(max-width:640px) {
+            .st-key-market_identity [data-testid="stColumn"],
+            .st-key-market_toolbar [data-testid="stColumn"] {min-width:0 !important;flex:1 1 0 !important;}
+            .st-key-market_toolbar [data-testid="stColumn"]:nth-child(2) {flex:1 1 100% !important;order:3;}
+            .st-key-market_toolbar [data-testid="stColumn"]:last-child {flex:0 0 44px !important;}
+            .st-key-market_toolbar [data-testid="stRadioOption"] p {overflow-wrap:anywhere;}
+        }
+        </style>''', unsafe_allow_html=True)
+    exchange = st.radio('Exchange', ['Indices', 'NSE', 'BSE'], horizontal=True, key='market_exchange',
+                        label_visibility='collapsed')
+    with st.container(key='market_identity'):
+        identity = st.columns([2, 1], vertical_alignment='bottom')
     if exchange == 'Indices':
-        title = st.selectbox('Index', list(INDEX_SYMBOLS), key='market_index')
+        title = identity[0].selectbox('Index', list(INDEX_SYMBOLS), key='market_index')
         symbol, venue = INDEX_SYMBOLS[title]
     else:
-        with st.form('market_search_form'):
-            query = st.text_input('Symbol or company', value='RELIANCE', max_chars=80, key='market_query')
-            submitted = st.form_submit_button('Search', icon=':material/search:')
+        with identity[0]:
+            with st.form('market_search_form'):
+                query = st.text_input('Symbol or company', value='RELIANCE', max_chars=80, key='market_query')
+                submitted = st.form_submit_button('Search', icon=':material/search:')
         saved = st.session_state.get('market_search_results')
         if submitted or not saved or saved[0] != exchange:
             st.session_state.pop('market_search_results', None)
@@ -72,17 +89,21 @@ def render_market_chart() -> None:
         title, venue = names[symbol], exchange
         if venue == 'BSE':
             st.caption('BSE equity history coverage is limited by the provider. Insufficient history blocks signals.')
-    interval = st.selectbox('Timeframe', list(MARKET_INTERVALS), index=5,
-                            format_func=lambda value: MARKET_INTERVALS[value][0], key='market_interval')
+    interval = identity[1].selectbox('Timeframe', list(MARKET_INTERVALS), index=5,
+                                    format_func=lambda value: MARKET_INTERVALS[value][0], key='market_interval')
     periods = MARKET_INTERVALS[interval][1]
     if st.session_state.get('market_period') not in periods:
         st.session_state['market_period'] = periods[0]
-    controls = st.columns([3, 1], vertical_alignment='bottom')
+    with st.container(key='market_toolbar'):
+        controls = st.columns([1, 2, .25], vertical_alignment='bottom')
     period = controls[0].selectbox('History', periods,
                                   format_func=lambda value: {'5d': '5 days', '1mo': '1 month', '60d': '60 days',
                                                             '3mo': '3 months', '6mo': '6 months', '1y': '1 year', '2y': '2 years'}[value],
                                   key='market_period')
-    if controls[1].button('', icon=':material/refresh:', help='Refresh market data', key='market_refresh'):
+    mode = controls[1].radio('Signal view', ['BUY / SELL', 'CALL BUY / PUT BUY'], horizontal=True,
+                             key='market_signal_view', label_visibility='collapsed')
+    options = mode == 'CALL BUY / PUT BUY'
+    if controls[2].button('', icon=':material/refresh:', help='Refresh market data', key='market_refresh'):
         cached_market_data.clear()
     try:
         with st.spinner(f'Loading {title} {interval} candles...'):
@@ -93,32 +114,21 @@ def render_market_chart() -> None:
         return
     analyses = market_analyses(dataset)
     latest = analyses[-1]
-    dates = [bar.date for bar in dataset.bars]
+    dates = [bar.date.isoformat() if interval == '1d' else bar.date.strftime('%Y-%m-%d %H:%M')
+             for bar in dataset.bars]
     stale = dataset.stale()
     unit = 'points' if dataset.is_index else 'INR'
     st.subheader(title)
-    st.caption(f'{symbol} | {venue} | Yahoo Finance | Adjusted {interval} OHLC | {len(dates)} candles')
-    st.caption(f'Last completed candle start: {dates[-1]} | Fetched UTC: {dataset.fetched_at:%Y-%m-%d %H:%M:%S} | Not real-time')
-    mode = st.radio('Signal view', ['BUY / SELL', 'CALL BUY / PUT BUY'], horizontal=True, key='market_signal_view')
-    options = mode == 'CALL BUY / PUT BUY'
+    st.caption(f'{symbol} | {venue} | {MARKET_INTERVALS[interval][0]} | Last candle: {dates[-1]} IST | Yahoo Finance adjusted OHLC | Delayed research only')
     if stale:
         st.warning('Provider history is stale: latest direction and levels are unavailable. Chart and past signals are historical only.')
     if options:
         st.warning('Underlying direction only. Option contract, strike, expiry and premium Entry/SL/TP are unavailable. Not an option-buy approval.')
-    metrics = st.columns(3)
-    change = (dataset.bars[-1].close / dataset.bars[-2].close - 1) * 100
-    metrics[0].metric(f'Last close ({unit})', f'{dataset.bars[-1].close:,.2f}', f'{change:+.2f}%')
-    metrics[1].metric(f'{interval} direction', 'UNAVAILABLE' if stale else stock_signal_label(latest.action, options))
-    metrics[2].metric('RSI 14', f'{latest.rsi:.1f}')
-    levels = st.columns(3)
-    for column, label, value in zip(levels, ('Entry', 'Stop', 'Target'), (latest.entry, latest.stop, latest.target)):
-        column.metric(f'Underlying {label.lower()} ({unit})', f'{value:,.2f}' if value and not stale else 'N/A')
-    if not stale:
-        st.caption(latest.reason)
     figure = go.Figure(go.Candlestick(x=dates, open=[bar.open for bar in dataset.bars],
                                     high=[bar.high for bar in dataset.bars], low=[bar.low for bar in dataset.bars],
                                     close=[bar.close for bar in dataset.bars], name=title,
-                                    increasing_line_color='#137b69', decreasing_line_color='#b94343'))
+                                    increasing=dict(line=dict(color='#137b69', width=1), fillcolor='#137b69'),
+                                    decreasing=dict(line=dict(color='#b94343', width=1), fillcolor='#b94343')))
     for label, values, color in [('EMA 20', [signal.ema_fast for signal in analyses], '#327ea8'),
                                   ('EMA 50', [signal.ema_slow for signal in analyses], '#a27a16')]:
         figure.add_trace(go.Scatter(x=dates[49:], y=values, name=label, line_color=color))
@@ -129,11 +139,31 @@ def render_market_chart() -> None:
                                    y=[analyses[index].entry for index in transitions], mode='markers',
                                    name=stock_signal_label(action, options),
                                    marker=dict(color=color, symbol=marker, size=11)))
-    figure.update_layout(height=460, margin=dict(l=0, r=0, t=15, b=0), xaxis_rangeslider_visible=False,
-                         yaxis_title=unit, legend=dict(orientation='h'),
-                         uirevision=f'{symbol}:{interval}:{period}:{mode}', font=dict(family='IBM Plex Sans', size=12),
-                         paper_bgcolor='rgba(0,0,0,0)')
+    visible_start = max(0, len(dates) - 60)
+    figure.update_layout(height=500, margin=dict(l=0, r=0, t=55, b=50), xaxis_rangeslider_visible=False,
+                         xaxis=dict(type='category', categoryorder='array', categoryarray=dates,
+                                    range=[visible_start - .5, len(dates) - .5],
+                                    tickmode='auto', nticks=4, tickangle=0,
+                                    labelalias={value: bar.date.strftime('%d %b<br>%y' if interval == '1d' else '%d %b<br>%H:%M')
+                                                for value, bar in zip(dates, dataset.bars)}, title='IST'),
+                         yaxis=dict(title=unit, side='right', fixedrange=True, autorange=True,
+                                    gridcolor='#e8edf2', zeroline=False),
+                         legend=dict(orientation='h', x=0, y=1.02, yanchor='bottom', font=dict(size=10)), dragmode='pan',
+                         uirevision=f'market-candles-v3:{symbol}:{interval}:{period}:{mode}',
+                         font=dict(family='IBM Plex Sans', size=12),
+                         paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='#ffffff')
     st.plotly_chart(figure, width='stretch', key='market_candles', config={'scrollZoom': True, 'displaylogo': False})
+    metrics = st.columns(3)
+    change = (dataset.bars[-1].close / dataset.bars[-2].close - 1) * 100
+    metrics[0].metric(f'Last close ({unit})', f'{dataset.bars[-1].close:,.2f}', f'{change:+.2f}%')
+    metrics[1].metric(f'{interval} direction', 'UNAVAILABLE' if stale else stock_signal_label(latest.action, options))
+    metrics[2].metric('RSI 14', f'{latest.rsi:.1f}')
+    levels = st.columns(3)
+    for column, label, value in zip(levels, ('Entry', 'Stop', 'Target'), (latest.entry, latest.stop, latest.target)):
+        column.metric(f'Underlying {label.lower()} ({unit})', f'{value:,.2f}' if value and not stale else 'N/A')
+    if not stale:
+        st.caption(latest.reason)
+    st.caption(f'{len(dates)} completed candles | Fetched UTC: {dataset.fetched_at:%Y-%m-%d %H:%M:%S} | No PAPER or live orders')
     with st.expander('Signal history'):
         history = pd.DataFrame([{
             'Session': session.isoformat(), 'Signal': stock_signal_label(signal.action, options),
@@ -141,7 +171,7 @@ def render_market_chart() -> None:
             f'Underlying target {unit}': signal.target, 'RSI': signal.rsi, 'Reason': signal.reason,
             'Symbol': symbol, 'Exchange': venue, 'Timeframe': interval, 'Source': f'Yahoo Finance adjusted {interval} OHLC',
             'Execution enabled': False, 'Option contract available': False,
-        } for session, signal in zip(dates[49:], analyses)])
+        } for session, signal in zip([bar.date for bar in dataset.bars[49:]], analyses)])
         st.dataframe(history.iloc[::-1], width='stretch', hide_index=True)
         st.download_button('Signals CSV', history.to_csv(index=False), f'{symbol}-{interval}-signals.csv',
                            'text/csv', icon=':material/download:', key='market_signals_download')
