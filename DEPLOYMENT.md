@@ -22,25 +22,41 @@ Authentication, PAPER automation, kill-switch settings and risk checks are uncha
 
 ## Indian Option Chain
 
-The Indian markets workspace includes an Upstox option chain for NIFTY 50,
-NIFTY BANK and SENSEX. Expiries come from the option-contract API, not a fixed
-calendar. The chain includes CE/PE premiums, bid/ask, volume, OI and OI change,
-IV and Greeks, with an ATM-centred strike window and full-chain CSV export.
+The Indian markets workspace defaults to a token-free Groww public option
+chain for NIFTY 50, NIFTY BANK and SENSEX. It uses the public website JSON
+endpoint at `https://groww.in/v1/api/option_chain_service/v1/option_chain/`
+with index paths `nifty`, `nifty-bank` and `sp-bse-sensex`. This is an
+undocumented website backend, not a supported developer API or guaranteed
+real-time feed; availability and schema may change. No login, cookies or
+broker account are required. HTTP/schema failures stop rendering quotes.
+
+Public mode shows only the expiry returned by the provider. Alternate-expiry
+query parameters were not verified and are not offered. CE/PE premiums, OI,
+OI change and volume are displayed; strike prices are converted from paise
+to INR, while premiums are already INR. OI/volume counts are shown as reported:
+their units have not been verified and must not be compared across providers.
+Spot, ATM, bid/ask and Greeks are unavailable, not synthesized. The strike
+window initially centres on the highest combined OI, with a centre selector.
+Contract last-trade times are shown separately and are not quote timestamps.
+
+The optional Upstox source retains contract-API expiry selection, CE/PE
+premiums, bid/ask, volume, OI and OI change, IV, Greeks and an ATM-centred window.
+Both sources include full-chain CSV export with source and retrieval metadata.
 
 Configure `UPSTOX_ACCESS_TOKEN` privately as a server environment variable or
 in the existing owner-only `/app/data/private/secrets.toml`. Environment values
 take precedence. Obtain and renew the token through Upstox's authorized access
 flow; never paste it into chat or commit it. Missing or rejected credentials
-leave the chain unavailable without affecting market charts. No credentials
-are bundled and no order API is used.
+leave only the Upstox source unavailable; public mode remains independent.
+No credentials are bundled and no order API is used.
 
-Contracts are cached for five minutes and chain snapshots for 30 seconds;
-Refresh clears both caches. Upstox's documented chain response has no exchange
-quote timestamp, so retrieval time does not establish quote freshness. Missing
+Upstox contracts are cached for five minutes and both providers' chain snapshots
+for 30 seconds; Refresh clears these caches. Neither integration supplies a
+verified exchange quote timestamp, so retrieval time does not establish quote freshness. Missing
 values remain unavailable, not zero. This is snapshot research only, not option
-buy approval or live order execution. Dashboard deployment does not activate
-the feed until a valid private token is configured and an authenticated request
-succeeds. Provider availability for each selected index remains required.
+buy approval or live order execution. Provider availability for each selected
+index remains required. Dashboard deployment needs no new secret for public
+mode; Upstox still requires a valid private token and a successful request.
 
 # Shadow Training
 

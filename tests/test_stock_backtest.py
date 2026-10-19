@@ -432,9 +432,114 @@ class MarketChartTests(unittest.TestCase):
 
 class StockOptionChainTests(unittest.TestCase):
     def setUp(self):
-        from maxtrade.stock_options import load_chain, load_expiries
+        from maxtrade.stock_options import load_chain, load_expiries, load_public_chain
         load_chain.clear()
         load_expiries.clear()
+        load_public_chain.clear()
+
+    def public_payload(self):
+        return {'optionChain': {'expiryDetailsDto': {'currentExpiry': '2099-01-01',
+                                                    'expiryDates': ['2099-01-01', '2099-01-08']},
+                                'optionChains': [{'strikePrice': 2300000,
+                                                  'callOption': {'strikePrice': 2300000, 'exchange': 'NSE',
+                                                                 'growwContractId': 'NIFTY9910123000CE',
+                                                                 'ltp': 100, 'openInterest': 100,
+                                                                 'prevOpenInterest': 120,
+                                                                 'lastTradeTime': 1700000000}}]}}
+
+    def test_public_chain_units_identity_and_missing_values(self):
+        from maxtrade.stock_options import normalize_public_chain
+        rows, expiries, current = normalize_public_chain(self.public_payload(), 'NIFTY 50')
+        self.assertEqual(current, '2099-01-01')
+        self.assertEqual(expiries, ['2099-01-01', '2099-01-08'])
+        self.assertEqual(rows[0]['Strike'], 23000)
+        self.assertEqual(rows[0]['CE LTP'], 100)
+        self.assertEqual(rows[0]['CE OI change'], -20)
+        self.assertIsNone(rows[0]['Spot'])
+        self.assertIsNone(rows[0]['CE Bid'])
+        self.assertIsNone(rows[0]['PE LTP'])
+        self.assertEqual(rows[0]['CE Last trade UTC'], '2023-11-14T22:13:20+00:00')
+
+    def test_public_chain_rejects_mismatch_and_malformed_data(self):
+        from maxtrade.stock_options import OptionChainError, normalize_public_chain
+        for title, expiry in [('NIFTY BANK', None), ('NIFTY 50', '2099-01-08')]:
+            with self.subTest(title=title, expiry=expiry), self.assertRaises(OptionChainError):
+                normalize_public_chain(self.public_payload(), title, expiry)
+        for field, value in [('strikePrice', True), ('strikePrice', -1), ('callOption', []),
+                             ('callOption', {'growwContractId': 'OTHER'})]:
+            payload = self.public_payload()
+            payload['optionChain']['optionChains'][0][field] = value
+            with self.subTest(field=field), self.assertRaises(OptionChainError):
+                normalize_public_chain(payload, 'NIFTY 50')
+        payload = self.public_payload()
+        payload['optionChain']['optionChains'] *= 2
+        with self.assertRaises(OptionChainError):
+            normalize_public_chain(payload, 'NIFTY 50')
+
+        for field, value in [('ltp', float('nan')), ('openInterest', -1), ('volume', True),
+                             ('lastTradeTime', float('inf')), ('lastTradeTime', 9999999999999999),
+                             ('lastTradeTime', datetime.now(timezone.utc).timestamp() + 3600),
+                             ('growwContractId', []), ('exchange', 'BSE')]:
+            payload = self.public_payload()
+            payload['optionChain']['optionChains'][0]['callOption'][field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(OptionChainError):
+                normalize_public_chain(payload, 'NIFTY 50')
+        for payload in (None, [], {}, {'optionChain': []},
+                        {'optionChain': {'optionChains': [], 'expiryDetailsDto': {}}}):
+            with self.subTest(payload=payload), self.assertRaises(OptionChainError):
+                normalize_public_chain(payload, 'NIFTY 50')
+
+    def test_public_weekly_and_monthly_index_contracts(self):
+        from maxtrade.stock_options import normalize_public_chain
+        for title, contract, exchange in [('NIFTY 50', 'NIFTY99JAN23000CE', 'NSE'),
+                                          ('NIFTY BANK', 'BANKNIFTY99JAN23000CE', 'NSE'),
+                                          ('SENSEX', 'SENSEX9910123000CE', 'BSE')]:
+            payload = self.public_payload()
+            quote = payload['optionChain']['optionChains'][0]['callOption']
+            quote.update(growwContractId=contract, exchange=exchange)
+            with self.subTest(title=title):
+                rows, _, _ = normalize_public_chain(payload, title)
+                self.assertEqual(rows[0]['CE contract'], contract)
+
+    def test_public_workspace_errors_and_stale_snapshots_hide_quotes(self):
+        from datetime import timedelta
+        from maxtrade.stock_options import OptionChainError, normalize_public_chain
+        source = 'from maxtrade.stock_options import render_stock_option_chain\nrender_stock_option_chain()'
+        rows, expiries, current = normalize_public_chain(self.public_payload(), 'NIFTY 50')
+        with patch('maxtrade.stock_options.load_public_chain') as loader:
+            loader.return_value = (rows, datetime.now(timezone.utc), expiries, current)
+            app = AppTest.from_string(source, default_timeout=20).run()
+            self.assertEqual(len(app.dataframe), 2)
+            self.assertTrue(any('Groww public' in caption.value for caption in app.caption))
+            loader.side_effect = OptionChainError('Public feed unavailable')
+            app.run()
+            self.assertTrue(app.error)
+            self.assertFalse(app.dataframe)
+            self.assertFalse(app.exception)
+            loader.side_effect = None
+            for retrieved, expiry in [(datetime.now(timezone.utc) - timedelta(seconds=61), current),
+                                       (datetime.now(timezone.utc), '2020-01-01')]:
+                loader.return_value = (rows, retrieved, expiries, expiry)
+                app.run()
+                self.assertTrue(any('snapshot has expired' in warning.value for warning in app.warning))
+                self.assertFalse(app.dataframe)
+                self.assertFalse(app.exception)
+
+    def test_public_request_needs_no_auth_and_is_cached(self):
+        from unittest.mock import Mock
+        import requests
+        from maxtrade.stock_options import OptionChainError, load_public_chain
+        response = Mock(status_code=200)
+        response.json.return_value = self.public_payload()
+        with patch('maxtrade.stock_options.requests.get', return_value=response) as request:
+            load_public_chain('NIFTY 50')
+            load_public_chain('NIFTY 50')
+            self.assertEqual(request.call_count, 1)
+            self.assertNotIn('Authorization', request.call_args.kwargs['headers'])
+            self.assertTrue(request.call_args.args[0].endswith('/nifty'))
+        with patch('maxtrade.stock_options.requests.get', side_effect=requests.Timeout('private details')):
+            with self.assertRaisesRegex(OptionChainError, 'no broker token'):
+                load_public_chain('SENSEX')
 
     def payload(self):
         return [{'expiry': '2099-01-01', 'underlying_key': 'NSE_INDEX|Nifty 50',
@@ -507,9 +612,18 @@ class StockOptionChainTests(unittest.TestCase):
 
     def test_option_workspace_missing_token_and_table(self):
         source = 'from maxtrade.stock_page import render_stock_page\nrender_stock_page()'
-        with patch('maxtrade.stock_page.fetch_market_history', side_effect=MarketDataError('Fixture')), patch('maxtrade.stock_options.access_token', return_value=''):
+        from maxtrade.stock_options import normalize_public_chain
+        rows, expiries, current = normalize_public_chain(self.public_payload(), 'NIFTY 50')
+        snapshot = (rows, datetime.now(timezone.utc), expiries, current)
+        with patch('maxtrade.stock_page.fetch_market_history', side_effect=MarketDataError('Fixture')), patch('maxtrade.stock_options.access_token', return_value=''), patch('maxtrade.stock_options.load_public_chain', return_value=snapshot):
             app = AppTest.from_string(source, default_timeout=20).run()
             app.radio(key='stock_workspace').set_value('Option chain').run()
+            self.assertEqual(len(app.dataframe), 2)
+            self.assertEqual(app.selectbox(key='option_source').value, 'Groww public')
+            self.assertEqual(app.metric[0].value, 'N/A')
+            self.assertEqual(app.dataframe[0].value['Strike'].iloc[0], 23000)
+            self.assertFalse(app.exception)
+            app.selectbox(key='option_source').set_value('Upstox').run()
             self.assertTrue(app.info)
             self.assertFalse(app.dataframe)
             self.assertFalse(app.exception)
